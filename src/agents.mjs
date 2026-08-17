@@ -149,6 +149,50 @@ export const pluginInstalls = () => {
     .sort((a, b) => b.at - a.at)
 }
 
+// Is this copy still installed anywhere?
+//
+// Asked by the pane, about itself. A pane is a long-lived process and nothing
+// tells it when its install goes away: `/plugin uninstall` is the agent's own
+// command and never runs a line of ours, so the hooks vanish and the sprite goes
+// on animating for a session nothing is watching any more. The same happens when
+// a copy hands over, and when someone simply deletes the folder.
+//
+// Both kinds of registration count, because a copy can be either: a clone writes
+// a path to its run.sh into the agent's settings, a plugin is listed by the
+// agent's plugin record. Unreadable is not the same as absent — a settings file
+// caught mid-write says nothing about whether we are installed — so anything
+// unreadable answers yes and the question gets asked again later.
+export const isRegistered = (root) => {
+  if (!root) return true
+
+  for (const agent of AGENTS) {
+    let text = ''
+
+    try {
+      text = readFileSync(agent.file(), 'utf8')
+    } catch {
+      continue
+    }
+
+    if (text.includes(`${root}/bin/run.sh`)) return true
+  }
+
+  try {
+    const text = readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8')
+
+    for (const [name, installs] of Object.entries(JSON.parse(text).plugins ?? {})) {
+      if (!name.startsWith('pokemanion')) continue
+
+      for (const install of [installs].flat()) if (install?.installPath === root) return true
+    }
+  } catch {
+    // No plugin record at all is a normal machine, not a missing install — fall
+    // through to the answer below rather than treating it as proof of anything.
+  }
+
+  return false
+}
+
 // `--claude` / `--codex` force a choice. Without one, whatever is installed.
 export const chosen = (argv = process.argv) => {
   const asked = AGENTS.filter((agent) => argv.includes(`--${agent.name}`))

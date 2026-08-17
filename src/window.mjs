@@ -21,6 +21,7 @@ import { scanLines } from './interrupt.mjs'
 import { ROOT, STATE_DIR, loadConfig, readState } from './config.mjs'
 import { MIN_DELAY, loadSprite } from './sprite.mjs'
 import { alignFor, busyFile, busySpeedFor, flipBusyFor, idleFile, touch, transitionFor } from './roster.mjs'
+import { isRegistered } from './agents.mjs'
 import { entry as dexEntry, paneCard } from './dex.mjs'
 import { available as updateAvailable, cornerText, installedVersion } from './update.mjs'
 
@@ -601,6 +602,52 @@ const stampOf = (path) => {
   }
 }
 
+// A pane whose install has been removed, leaving.
+//
+// Nothing tells it. `/plugin uninstall` is the agent's own command and runs no
+// line of ours, so the hooks disappear and the sprite goes on animating for a
+// session nothing is watching — and with the hooks gone there is no longer any
+// hook that could close it, so it would run until the terminal did. Uninstalling
+// left a Pokemon behind that had to be hunted down and killed by hand.
+//
+// Asked rarely: it reads two small files, and a pane that is a few seconds late
+// noticing it has been uninstalled has cost nobody anything.
+//
+// Twice before believing it, because the answer comes from files that are
+// rewritten in place — an install being upgraded is momentarily absent from its
+// own record, and exiting on that would close a pane that is about to be fine.
+const UNINSTALL_EVERY = 20_000
+
+let registeredAt = Date.now()
+let missedOnce = false
+
+const checkUninstalled = () => {
+  // Only panes a session owns. `npm run window` is someone looking at a sprite
+  // deliberately, and it is how the pane is worked on — walking out from under
+  // them because the hooks happen to be registered elsewhere would be its own
+  // small betrayal.
+  if (!sessionArg) return
+
+  if (Date.now() - registeredAt < UNINSTALL_EVERY) return
+
+  registeredAt = Date.now()
+
+  if (isRegistered(ROOT)) {
+    missedOnce = false
+
+    return
+  }
+
+  if (!missedOnce) {
+    missedOnce = true
+
+    return
+  }
+
+  process.stdout.write(DELETE_PLACEMENTS + SHOW_CURSOR + '\n')
+  process.exit(0)
+}
+
 // Zero while waiting, so the first poll reads the claim rather than comparing
 // against it.
 //
@@ -837,6 +884,8 @@ const tick = () => {
   // case closeWindow left a note rather than a signal — it had no pid to send
   // one to. Exiting here is what stops an orphaned sprite outliving its session.
   if (wasClosed()) process.exit(0)
+
+  checkUninstalled()
 
   checkSpecies()
 
