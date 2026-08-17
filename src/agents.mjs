@@ -213,22 +213,17 @@ export const isRegistered = (root) => {
   // Nothing readable said anything either way. Not evidence of removal.
   if (switchedOn === null) return true
 
-  if (!switchedOn) return false
-
-  try {
-    const text = readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8')
-
-    for (const [name, installs] of Object.entries(JSON.parse(text).plugins ?? {})) {
-      if (!name.startsWith('pokemanion')) continue
-
-      for (const install of [installs].flat()) if (install?.installPath === root) return true
-    }
-  } catch {
-    // Switched on, and no record to say which folder — believe the switch.
-    return true
-  }
-
-  return false
+  // Switched off is the answer on its own. Which folder is current no longer
+  // matters once the plugin itself is gone.
+  //
+  // And switched on is enough, without asking which version's folder is the
+  // recorded one. That question was asked here once, so a copy replaced by a
+  // newer one counted as removed — which meant updating closed the pane you were
+  // looking at, mid-session, over a version bump. The old copy still works
+  // perfectly; it is simply not the newest, and the next session picks up the new
+  // one anyway. Losing a Pokemon is a real cost and being one version behind for
+  // the rest of an afternoon is not.
+  return switchedOn
 }
 
 // `--claude` / `--codex` force a choice. Without one, whatever is installed.
