@@ -55,6 +55,16 @@ const check = (name, ok, detail = '') => results.push({ name, ok, detail })
 // Not wrapped in a catch: the first version was, mkdirSync was not in scope, the
 // ReferenceError was swallowed, and the guard did nothing while looking exactly
 // like it worked.
+// No pane is to be opened by anything this suite runs.
+//
+// Every hook here is spawned from this process, so setting it once covers all of
+// them and anything they start in turn. SessionStart was left out of the event
+// list for this reason and that held until a second event learned to open a
+// pane — `--<name>` reopening one — at which point `npm test` put sprites on
+// screen beside the real sessions again, and the note explaining why SessionStart
+// was excluded had quietly become untrue.
+process.env.PIXEL_RUNNER_NO_WINDOW = '1'
+
 mkdirSync(STATE_DIR, { recursive: true })
 writeFileSync(join(STATE_DIR, 'greeted'), 'smoke')
 

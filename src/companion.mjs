@@ -525,6 +525,20 @@ export const logChoice = (id, species, why) => {
 export const openWindow = (id, source = null, forced = null) => {
   const config = loadConfig()
 
+  // A way to drive the real handler without splitting the terminal it is being
+  // driven from.
+  //
+  // The suite runs the actual hook rather than a stand-in, which is the whole
+  // reason it catches anything — and that used to be safe because SessionStart
+  // was the only event that opened a pane, so the suite simply never sent one.
+  // Reopening on `--<name>` made a second event open panes, the suite had no
+  // idea, and `npm test` left sprites running on the machine beside the real
+  // sessions.
+  //
+  // Set here rather than remembered in the suite, because the next path that
+  // opens a pane will not know it was supposed to tell anyone.
+  if (process.env.PIXEL_RUNNER_NO_WINDOW === '1') return false
+
   if (isBackgroundAgent(id, source)) return false
 
   // A note left by `closeWindow` when a session ended before its pane had
