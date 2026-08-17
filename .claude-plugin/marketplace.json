@@ -1,6 +1,6 @@
 {
   "name": "pokemanion",
-  "version": "1.4.10",
+  "version": "1.5.0",
   "description": "A Pokemon beside every coding session.",
   "owner": {
     "name": "khatriadbhut",
@@ -10,7 +10,7 @@
     {
       "name": "pokemanion",
       "description": "A Pokemon in a terminal pane beside every session, resting while the agent waits and animating while it works. 16 built in, 1242 summonable by name, with a Pokedex.",
-      "version": "1.4.10",
+      "version": "1.5.0",
       "author": {
         "name": "khatriadbhut"
       },

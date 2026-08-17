@@ -21,7 +21,22 @@ import { isPluginRoot } from './shell.mjs'
 
 const LATEST = join(STATE_DIR, 'latest-version')
 const ANNOUNCED = join(STATE_DIR, 'announced-version')
-const DAY = 24 * 60 * 60 * 1000
+
+// When we last *tried*, as opposed to when we last succeeded.
+//
+// The throttle used to be keyed on the answer, and the answer is only written
+// when the fetch works — so a machine that was offline, or behind a proxy, or
+// simply unlucky, was not throttled at all. It spawned a fresh curl on every
+// hook: every prompt, every tool call, each one failing quietly. Nothing was
+// ever slow, because none of it blocks, but a process per hook to ask a question
+// that had just gone unanswered is not a reasonable thing to do to someone's
+// laptop.
+const TRIED = join(STATE_DIR, 'checked-at')
+
+// Six hours rather than a day. The check is one detached curl with a five second
+// cap and nothing waits on it, so the old interval was buying nothing and cost a
+// day of not knowing. Bounded properly now that failures back off too.
+const EVERY = 6 * 60 * 60 * 1000
 
 const SOURCE = 'https://raw.githubusercontent.com/khatriadbhut/pokemanion/main/package.json'
 
@@ -60,10 +75,23 @@ const stamp = (file) => {
 export const checkInBackground = (now = Date.now()) => {
   const last = stamp(LATEST)
 
-  if (last && now - (last.at ?? 0) < DAY) return 'checked recently'
+  if (last && now - (last.at ?? 0) < EVERY) return 'checked recently'
+
+  // Both, because they answer different questions: the answer may be old and
+  // still current, while an attempt that found nothing still counts as an
+  // attempt. Asking only the first is what let a failing check run on every hook.
+  const tried = stamp(TRIED)
+
+  if (tried && now - (tried.at ?? 0) < EVERY) return 'tried recently'
 
   try {
     mkdirSync(STATE_DIR, { recursive: true })
+
+    // Written before the fetch rather than after, so a check that never comes
+    // back is still a check that happened.
+    try {
+      writeFileSync(TRIED, JSON.stringify({ at: now }))
+    } catch {}
 
     // Written by the child rather than parsed here, so nothing waits on it.
     const script =
