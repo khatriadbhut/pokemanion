@@ -77,6 +77,13 @@ try {
   writeFileSync(PID_FILE, String(process.pid))
 } catch {}
 
+// The claim the launcher took while this pane was on its way in. There is a pid
+// now, so `windowIsRunning` can answer for itself and the claim has nothing left
+// to say.
+try {
+  unlinkSync(join(STATE_DIR, `window-${sessionArg ?? 'default'}.opening`))
+} catch {}
+
 const releasePid = () => {
   try {
     if (readFileSync(PID_FILE, 'utf8').trim() !== String(process.pid)) return

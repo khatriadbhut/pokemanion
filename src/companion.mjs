@@ -64,6 +64,20 @@ export const windowIsRunning = (id) => {
 // goes — so the whole strip disappears with the session that owned it.
 export const closedFileFor = (id) => join(STATE_DIR, `window-${safe(id)}.closed`)
 
+// A pane being opened right now, by somebody.
+//
+// `windowIsRunning` cannot answer that. It asks whether a pid is alive, and a
+// pane does not have one until it has been through splitting a terminal, typing
+// a command and booting node — a second or more during which two callers both
+// see no pane and both open one.
+//
+// That happened on a session restart: two SessionStart hooks a thirty-third of a
+// second apart, two splits, and because the launcher script is named after the
+// session, both wrote and ran the same file. One won. The other caught it
+// mid-write, failed to exec, and sat there as a bare shell prompt beside the
+// Pokemon — which reads as the pane having crashed.
+export const openingFileFor = (id) => join(STATE_DIR, `window-${safe(id)}.opening`)
+
 export const closeWindow = (id) => {
   const pid = readPid(id)
 
@@ -336,7 +350,10 @@ export const speciesInUse = (exceptId = null) => {
     // pane failed to start at all, nobody ever comes to read it and it sits
     // there. Harmless, and it would still be sitting there in a year, so it is
     // swept alongside the claims rather than left to accumulate.
-    if (file.endsWith('.closed')) {
+    // `.opening` is swept on the same rule and for the same reason: a pane that
+    // never started leaves one behind, and a claim trusted forever would block
+    // every later attempt for that session.
+    if (file.endsWith('.closed') || file.endsWith('.opening')) {
       try {
         if (Date.now() - statSync(join(STATE_DIR, file)).mtimeMs > STARTUP_GRACE_MS) unlinkSync(join(STATE_DIR, file))
       } catch {}
@@ -525,11 +542,8 @@ export const openWindow = (id, source = null, forced = null) => {
   // after that it is litter. An explicit ask clears it whatever its age, because
   // naming a Pokemon is a clear request for a pane to put it in.
   //
-  // Generous rather than tight — opening a pane means splitting a terminal,
-  // typing into it and booting node, and being a second too eager here brings
-  // back the orphaned sprite this note exists to prevent.
-  const STARTUP_GRACE_MS = 15_000
-
+  // The grace period is the shared one: it is the same question every time —
+  // could a pane still be on its way in?
   try {
     const note = closedFileFor(id)
     const left = Number(readFileSync(note, 'utf8').trim())
@@ -581,6 +595,36 @@ export const openWindow = (id, source = null, forced = null) => {
     }
 
     return false
+  }
+
+  // Claim the pane before anything is launched.
+  //
+  // Written with the exclusive flag, so of two callers arriving together exactly
+  // one succeeds — the check above cannot do this, because a pane has no pid to
+  // find until a second after it was asked for.
+  //
+  // A stale claim is taken over rather than obeyed. Opening can fail outright —
+  // no Ghostty, no accessibility permission — and a claim nobody ever came back
+  // for would otherwise mean no pane for the rest of the session.
+  {
+    const claim = openingFileFor(id)
+
+    try {
+      mkdirSync(STATE_DIR, { recursive: true })
+      writeFileSync(claim, String(Date.now()), { flag: 'wx' })
+    } catch {
+      let at = 0
+
+      try {
+        at = Number(readFileSync(claim, 'utf8').trim())
+      } catch {}
+
+      if (Number.isFinite(at) && at > 0 && Date.now() - at < STARTUP_GRACE_MS) return false
+
+      try {
+        writeFileSync(claim, String(Date.now()))
+      } catch {}
+    }
   }
 
   const rows = config.windowRows ?? 3
