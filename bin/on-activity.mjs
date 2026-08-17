@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ROOT, STATE_DIR, clearState, loadConfig, readState, writeState } from '../src/config.mjs'
-import { closeWindow, openWindow } from '../src/companion.mjs'
+import { closeWindow, openWindow, windowIsRunning } from '../src/companion.mjs'
 
 const WORKING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse'])
 const IDLE = new Set(['Stop', 'SessionEnd', 'SessionStart'])
@@ -454,20 +454,46 @@ try {
       // rewrites it.
       if (asked.kind === 'switch' && asked.guest && !isFetched(asked.name)) {
         const { spawn } = await import('node:child_process')
-        const { mkdirSync, writeFileSync } = await import('node:fs')
+        const { mkdirSync, readFileSync, writeFileSync } = await import('node:fs')
         const { STATE_DIR } = await import('../src/config.mjs')
         const { rememberSpecies } = await import('../src/assigned.mjs')
+
+        // Kept so the fetch can put it back if the download fails.
+        //
+        // `ensure` deletes the whole directory when either half fails to arrive,
+        // on the rule that half a sprite is worse than none. That leaves the
+        // claim naming a Pokemon that is not there, which every later pane in
+        // the session then inherits — so one failed download made it look like
+        // the tool had stopped working entirely.
+        let previous = ''
+
+        try {
+          previous = readFileSync(file, 'utf8')
+        } catch {}
 
         mkdirSync(STATE_DIR, { recursive: true })
         writeFileSync(file, asked.name)
         rememberSpecies(session, asked.name, asked.rolled ? 'rolled' : 'switched')
 
-        const child = spawn(process.execPath, [join(ROOT, 'src', 'fetch.mjs'), asked.name, file], {
-          detached: true,
-          stdio: 'ignore',
-        })
+        // No pane and a Pokemon that has to be downloaded — both at once, which
+        // is the worst version of this and the one worth handling properly.
+        // Opening the pane covers the download too: it puts the Pokeball on
+        // screen and starts the fetch itself, so the wait happens somewhere you
+        // can see it rather than in silence.
+        //
+        // Only if that actually opened something. A machine with no Ghostty gets
+        // false back, and the download still has to happen for the pane it will
+        // eventually have.
+        const opened = !windowIsRunning(session) && openWindow(session, 'switch', asked.name)
 
-        child.unref()
+        if (!opened) {
+          const child = spawn(process.execPath, [join(ROOT, 'src', 'fetch.mjs'), asked.name, file, previous], {
+            detached: true,
+            stdio: 'ignore',
+          })
+
+          child.unref()
+        }
 
         process.stderr.write(
           asked.rolled
@@ -495,6 +521,16 @@ try {
         // restart is the same bug as the rotation one, arrived at from the
         // other direction: the switch was never written anywhere that lasts.
         rememberSpecies(session, asked.name, asked.rolled ? 'rolled' : 'switched')
+
+        // Close the pane and `--gengar` had nothing to switch. The claim was
+        // written correctly, into a file nothing was reading, and the command
+        // looked ignored — a pane was only ever opened at the start of a
+        // session, so the only way to get one back was to start another session.
+        //
+        // Naming a Pokemon is a clear enough request for a pane to show it in.
+        // Forced, because the pane has to come back as the one just typed rather
+        // than re-running the usual decision, which a launch flag outranks.
+        if (!windowIsRunning(session)) openWindow(session, 'switch', asked.name)
       }
 
       // Exit 2 blocks the prompt and erases it, and shows this to you as the

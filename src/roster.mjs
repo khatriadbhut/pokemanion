@@ -620,6 +620,22 @@ export const requestedSpecies = (env = process.env) => {
   return ensure(asked)
 }
 
+// The same question without going to the network: what did they ask for, and is
+// it here yet?
+//
+// `claude --kyogre` sets the variable above for the whole session, and answering
+// it used to mean downloading before the pane could open — inside a hook that is
+// killed after five seconds, which is how a launch flag came to produce no pane
+// at all. The launcher asks this instead, opens the split immediately, and lets
+// the download run behind it.
+export const requestedName = (env = process.env) => {
+  const asked = String(env[SPECIES_ENV] ?? '').trim().toLowerCase()
+
+  if (!asked) return null
+
+  return resolveName(asked)
+}
+
 // Pikachu whenever Pikachu is free, something else otherwise.
 //
 // `taken` is the Pokemon the panes currently up are holding. The rule used to

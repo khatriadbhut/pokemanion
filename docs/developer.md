@@ -138,6 +138,28 @@ here rather than in someone's terminal.
 
 `npm run watch` prints the working/waiting decision the pane is making, live.
 
+### What you cannot test without a real terminal
+
+**The pane's rendering.** `chafa` asks the terminal about itself before it draws,
+and waits for the answer. A real terminal replies immediately — 67ms for a frame.
+A fake one never replies, so it blocks for seconds per frame and the pane looks
+hung. Wrapping the pane in `script` to give it a pty does not help: `script`
+provides the terminal device without anything behind it to answer.
+
+So a pane under a fake terminal can only draw sprites that are already in the
+cache. Anything it has to render will appear to hang, and the hang is the test
+setup rather than the code. This cost most of a day once — the pane was read as
+frozen four separate times when it was waiting on chafa waiting on nobody.
+
+What can be tested without one: everything up to the drawing. Whether the claim
+file is noticed, whether the files are found, which sprite is chosen. Instrument
+a throwaway copy of `src/window.mjs` in `src/` — relative imports resolve there —
+and read the log rather than the screen.
+
+**A pane is only opened at the start of a session**, and by `--<name>` when none
+is running. Nothing else brings one back, so a test that closes a pane and waits
+for it to reappear is waiting for something that will not happen.
+
 ## Releasing
 
 Bump the version in four files: `package.json`, `.claude-plugin/plugin.json`,

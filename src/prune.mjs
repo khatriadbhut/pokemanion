@@ -121,7 +121,31 @@ export const prune = ({ dry = false, budgetMb, keepDays } = {}) => {
     }
   })()
 
-  const guests = guestsByAge().map((name) => ({ name, size: guestCost(name), at: used[name] ?? 0 }))
+  // When the ledger has nothing to say about a guest, ask the disk rather than
+  // assuming 1970.
+  //
+  // The ledger is one JSON file, read and rewritten whole, with no lock. Two
+  // writers at once — and a guest is now fetched in a detached process, so there
+  // can be — means one of them reads, the other writes, and the first writes its
+  // stale copy back over the top. The entry that goes missing that way belonged
+  // to a Pokemon downloaded seconds ago, and `?? 0` dated it to the epoch, which
+  // is a fortnight stale by any reckoning. The next pane to open deleted it.
+  //
+  // The files' own timestamp cannot be lost by a race and says the same thing
+  // the ledger was trying to say: when this guest last turned up.
+  const arrived = (name) => {
+    try {
+      return statSync(join(POKEMON_DIR, name)).mtimeMs
+    } catch {
+      return 0
+    }
+  }
+
+  const guests = guestsByAge().map((name) => ({
+    name,
+    size: guestCost(name),
+    at: used[name] ?? arrived(name),
+  }))
 
   // A guest a pane is showing right now is not a candidate, however old the
   // last-used stamp looks. Nothing touches that stamp while a Pokemon simply

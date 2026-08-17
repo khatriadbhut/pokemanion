@@ -9,12 +9,12 @@
 // worse than the wrong sprite" — and re-reads whenever the file's timestamp
 // changes, so rewriting the same name here is what makes the Pokemon appear.
 //
-// Usage: run.sh src/fetch.mjs <name> <claim-file>
+// Usage: run.sh src/fetch.mjs <name> <claim-file> [previous-claim]
 
-import { writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { ensure } from './roster.mjs'
 
-const [, , name, claim] = process.argv
+const [, , name, claim, previous] = process.argv
 
 if (name) {
   const got = ensure(name)
@@ -22,6 +22,20 @@ if (name) {
   if (got && claim) {
     try {
       writeFileSync(claim, got)
+    } catch {}
+  }
+
+  // Put back whatever the session was showing before.
+  //
+  // A download that fails takes the sprite directory with it — `ensure` will
+  // not keep half a Pokemon — so leaving the claim naming this one points the
+  // session at files that no longer exist. Every pane it opens after that
+  // starts on a dead name, which is indistinguishable from the tool being
+  // broken. Better to carry on with the Pokemon that was already there.
+  if (!got && claim) {
+    try {
+      if (previous) writeFileSync(claim, previous)
+      else rmSync(claim, { force: true })
     } catch {}
   }
 }

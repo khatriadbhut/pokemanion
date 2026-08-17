@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { existsSync as fileExists, readdirSync } from 'node:fs'
 import { ROOT, STATE_DIR, loadConfig } from './config.mjs'
-import { isFetched, pickFor, requestedSpecies } from './roster.mjs'
+import { isFetched, pickFor, requestedName, requestedSpecies } from './roster.mjs'
 import { rememberSpecies, rememberedSpecies } from './assigned.mjs'
 
 // One sprite per session, so the pid is recorded per session too. A window
@@ -172,7 +172,7 @@ const logSplit = (id, detail) => {
   } catch {}
 }
 
-const openSplit = (rows, shrink, grow, id, species) => {
+const openSplit = (rows, shrink, grow, id, species, pending = null) => {
   // Before driving AppleScript at an application that may not exist.
   //
   // Without this, a machine with no Ghostty gets the whole keystroke dance and
@@ -214,7 +214,8 @@ const openSplit = (rows, shrink, grow, id, species) => {
   // starts.
   const full =
     `exec "${process.execPath}" "${join(ROOT, 'src', 'window.mjs')}" ${rows} --session=${safe(id)}` +
-    (species ? ` --species=${species}` : '')
+    (species ? ` --species=${species}` : '') +
+    (pending ? ` --pending=${pending}` : '')
 
   // Not tmpdir(): on macOS that is a forty character path under /var/folders,
   // and every character of it is another keystroke. /tmp is a symlink to the
@@ -496,10 +497,28 @@ export const logChoice = (id, species, why) => {
   } catch {}
 }
 
-export const openWindow = (id, source = null) => {
+// `forced` is a Pokemon this pane must open as, rather than one it works out
+// for itself.
+//
+// Typing `--gengar` after closing the pane reopens it, and the answer to "which
+// Pokemon" is already settled — you just said it. Without this the reopened pane
+// runs the usual decision, where a launch flag still set from `claude --kyogre`
+// outranks anything typed later, so the pane came back as the wrong Pokemon and
+// looked like the command had been ignored.
+export const openWindow = (id, source = null, forced = null) => {
   const config = loadConfig()
 
   if (isBackgroundAgent(id, source)) return false
+
+  // A note left by `closeWindow` when a session ended before its pane had
+  // written a pid. It tells a pane that is still starting to stop — so a stale
+  // one would tell this new pane, opened deliberately, to quit the moment it
+  // drew its first frame.
+  if (forced) {
+    try {
+      unlinkSync(closedFileFor(id))
+    } catch {}
+  }
 
   // A pane is already up for this session — resuming one whose window never
   // closed. Nothing needs opening, but an explicit ask still has to land, and
@@ -508,13 +527,34 @@ export const openWindow = (id, source = null) => {
   // Writing the claim is the whole switch: the pane watches that file and picks
   // it up within a frame or two, exactly as `--random` does mid-session.
   if (windowIsRunning(id)) {
-    const asked = requestedSpecies()
+    const asked = forced ?? requestedName()
 
     if (asked) {
-      try {
-        mkdirSync(STATE_DIR, { recursive: true })
-        writeFileSync(speciesFileFor(id), asked)
-      } catch {}
+      // Resolved rather than fetched, for the same reason the launch path below
+      // stopped fetching: `claude --resume --somethingNew` against a live pane
+      // used to download here, inside a hook with five seconds to live. It was
+      // the last place that could still be killed mid-download.
+      //
+      // A pane that is already up needs no Pokeball — it has a Pokemon on screen
+      // and can go on showing it. So the claim is only written once the files
+      // are real, which `src/fetch.mjs` does when they land, and the pane picks
+      // the new name up on its next poll.
+      if (isFetched(asked)) {
+        try {
+          mkdirSync(STATE_DIR, { recursive: true })
+          writeFileSync(speciesFileFor(id), asked)
+        } catch {}
+      } else {
+        try {
+          const fetcher = spawn(
+            process.execPath,
+            [join(ROOT, 'src', 'fetch.mjs'), asked, speciesFileFor(id), ''],
+            { detached: true, stdio: 'ignore' },
+          )
+
+          fetcher.unref()
+        } catch {}
+      }
 
       // Remembered as well as claimed. `claude --resume --gengar` against a
       // pane that is already up changes what you are looking at, so it is the
@@ -528,7 +568,27 @@ export const openWindow = (id, source = null) => {
 
   const rows = config.windowRows ?? 3
   const reason = {}
-  const species = chooseSpecies(id, config, process.env, reason)
+
+  // Asked for by name, and not downloaded yet.
+  //
+  // `chooseSpecies` would fetch it right here, and this whole function runs
+  // inside a hook that is killed at five seconds. A download is two seconds on a
+  // good connection and fourteen on a bad one, and the split is opened further
+  // down — so an unlucky launch was killed before it ever opened one. No pane,
+  // no error, and the half-finished download meant the next session lost the
+  // same race from the start.
+  //
+  // So the split opens now, with the Pokeball sitting in it, and the download
+  // runs behind it. `src/fetch.mjs` writes the name into the claim file when it
+  // lands; the pane is already watching that file and greets a new name with the
+  // ball bursting open, which is the arrival it plays for any switch. The wait
+  // becomes the ceremony instead of an empty pane.
+  const wanted = forced ?? requestedName()
+  const pending = wanted && !isFetched(wanted) ? wanted : null
+
+  const species = pending ? null : (forced ?? chooseSpecies(id, config, process.env, reason))
+
+  if (forced || pending) reason.why = `${forced ? 'reopened' : 'asked'}${pending ? ', arriving' : ''}`
 
   // Claimed before the terminal is launched, so a second session starting in
   // the same moment sees this one taken rather than an empty room.
@@ -544,9 +604,33 @@ export const openWindow = (id, source = null) => {
     rememberSpecies(id, species, reason.why)
   }
 
+  // Started before the split rather than after, so the download and the two
+  // seconds of opening a terminal overlap. Detached, because this hook has
+  // milliseconds to live and the download outlives it by design.
+  //
+  // It writes the name into the claim file when both halves are on disk, and
+  // puts back whatever was there if they never arrive — so a failed download
+  // leaves a ball that quietly goes back to an ordinary Pokemon rather than a
+  // pane waiting on something that is never coming.
+  if (pending) {
+    try {
+      mkdirSync(STATE_DIR, { recursive: true })
+
+      const fetcher = spawn(
+        process.execPath,
+        [join(ROOT, 'src', 'fetch.mjs'), pending, speciesFileFor(id), ''],
+        { detached: true, stdio: 'ignore' },
+      )
+
+      fetcher.unref()
+    } catch {}
+
+    rememberSpecies(id, pending, reason.why)
+  }
+
   logChoice(id, species, reason.why)
 
-  if (config.windowMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species)
+  if (config.windowMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species, pending)
 
   const args = [
     '-na',
@@ -564,6 +648,7 @@ export const openWindow = (id, source = null) => {
     String(rows),
     `--session=${safe(id)}`,
     ...(species ? [`--species=${species}`] : []),
+    ...(pending ? [`--pending=${pending}`] : []),
   ]
 
   // Detached and with its streams released, so the hook can exit immediately

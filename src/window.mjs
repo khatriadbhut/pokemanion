@@ -14,11 +14,11 @@
 //
 // Usage: npm run window [rows] [busySprite] [idleSprite]
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { scanLines } from './interrupt.mjs'
-import { STATE_DIR, loadConfig, readState } from './config.mjs'
+import { ROOT, STATE_DIR, loadConfig, readState } from './config.mjs'
 import { MIN_DELAY, loadSprite } from './sprite.mjs'
 import { alignFor, busyFile, busySpeedFor, flipBusyFor, idleFile, touch, transitionFor } from './roster.mjs'
 import { entry as dexEntry, paneCard } from './dex.mjs'
@@ -39,6 +39,10 @@ const config = loadConfig()
 const args = process.argv.slice(2)
 const sessionArg = args.find((a) => a.startsWith('--session='))?.slice('--session='.length) ?? null
 const speciesArg = args.find((a) => a.startsWith('--species='))?.slice('--species='.length) ?? null
+
+// A Pokemon that was asked for at launch and is still downloading. The pane
+// opens on the closed Pokeball and waits for it — see the ball below.
+const pendingArg = args.find((a) => a.startsWith('--pending='))?.slice('--pending='.length) ?? null
 const [rowsArg, busyArg, idleArg] = args.filter((a) => !a.startsWith('--'))
 const rows = Number(rowsArg) || 4
 
@@ -252,7 +256,43 @@ const useSpecies = (name) => {
   if (species) touch(species)
 }
 
-useSpecies(speciesArg ?? null)
+// The same check the live switch makes at `checkSpecies`, which startup went
+// without for too long. A pane that threw here took its split down with it,
+// which looks like the pane never opening at all rather than like a missing file.
+const playable = (name) => !name || (existsSync(idleFile(name)) && existsSync(busyFile(name)))
+
+// Named here because the wait below needs it, and the species poll further down
+// reads the same file.
+const SPECIES_FILE = join(STATE_DIR, `window-${sessionArg ?? 'default'}.species`)
+
+// One idea rather than three: the Pokemon this pane is waiting for.
+//
+// It arrives two ways. `--pending` is the launcher saying so outright, because
+// it knew before the split opened. The other is this pane being handed a name
+// whose files are not on disk — a guest the pruner took while the session was
+// closed — which used to be a crash and then, briefly, a silent fall back to
+// Pikachu. Both are the same situation and both now get the Pokeball.
+const waitingFor = pendingArg ?? (speciesArg && !playable(speciesArg) ? speciesArg : null)
+
+// The launcher already started the download for a `--pending`. This is only for
+// the case this pane worked out for itself, and starting a second one would
+// mean two processes writing the same files.
+if (waitingFor && !pendingArg) {
+  try {
+    const child = spawn(process.execPath, [join(ROOT, 'src', 'fetch.mjs'), waitingFor, SPECIES_FILE], {
+      detached: true,
+      stdio: 'ignore',
+    })
+
+    child.unref()
+  } catch {}
+}
+
+try {
+  useSpecies(waitingFor ? null : (speciesArg ?? null))
+} catch {
+  useSpecies(null)
+}
 
 // The Pokeball, played when a Pokemon *arrives* — the pane opening, or a
 // species being switched to. Not when Claude starts or stops working.
@@ -270,6 +310,33 @@ useSpecies(speciesArg ?? null)
 const BALL_WINDOW = [30, 67]
 
 const ball = config.pokeball === false ? null : loadSprite('assets/17-pokeball.gif', 'ball', paneRows, null, false, BALL_WINDOW)
+
+// The other half of the same file: the ball before it starts moving.
+//
+// Frames 0 to 30 were never drawn by anything — the arrival window above starts
+// at the wobble. They are the ball at rest, which is exactly what a pane waiting
+// on a download should be showing.
+//
+// This is what `claude --kyogre` looks like now when kyogre is not on disk yet.
+// The split opens on a closed ball instead of waiting, in silence, for a
+// download it was going to be killed in the middle of anyway. When the files
+// land, the claim file changes, and `checkSpecies` greets the new name with the
+// wobble and the burst it plays for every arrival. The ball opens and the
+// Pokemon is there, which is the right thing for a wait to turn into.
+const BALL_CLOSED = [0, 30]
+
+if (waitingFor) {
+  try {
+    const resting = loadSprite('assets/17-pokeball.gif', 'ballwait', paneRows, null, false, BALL_CLOSED)
+
+    idle = resting
+    busy = resting
+
+    // No silhouette flash between the two: they are the same ball, and nothing
+    // is transforming into anything yet.
+    transition = null
+  } catch {}
+}
 
 const ballFrames = () =>
   ball
@@ -514,7 +581,6 @@ const transitionFrames = (from, to) => {
 // Polled rather than watched, because fs.watch on a single file is unreliable
 // across editors and atomic writes, and a stat every half second costs nothing
 // next to the chafa work this pane already does.
-const SPECIES_FILE = join(STATE_DIR, `window-${sessionArg ?? 'default'}.species`)
 // Reloading from the cache costs 3-10ms, so the poll interval is the entire
 // delay you feel. A stat is a few microseconds; at this rate it is around seven
 // a second, which is nothing beside the chafa work this pane already did.
@@ -528,7 +594,18 @@ const stampOf = (path) => {
   }
 }
 
-let speciesAt = stampOf(SPECIES_FILE)
+// Zero while waiting, so the first poll reads the claim rather than comparing
+// against it.
+//
+// This line is reached after the Pokeball has been converted, a second or so
+// into starting up, and the download it is waiting for takes about the same. So
+// the claim could already have been written by the time this ran — and recording
+// its timestamp here means recording it as already seen. The pane then sat on a
+// closed ball forever, waiting for a change that had happened while it booted.
+//
+// Nothing is lost by starting at zero: a stamp of zero means no claim file at
+// all, and the poll below treats any real one as news.
+let speciesAt = waitingFor ? 0 : stampOf(SPECIES_FILE)
 let speciesCheckedAt = Date.now()
 
 const checkSpecies = () => {
