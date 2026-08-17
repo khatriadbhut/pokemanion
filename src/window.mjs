@@ -740,7 +740,12 @@ const drawCard = (sprite) => {
 // Re-read on a timer rather than per frame. The pane draws several times a
 // second and this is two small files.
 const VERSION_EVERY = 30_000
-const ourVersion = installedVersion()
+
+// Re-read on the same timer as everything else here, rather than once at the
+// top. A pane outlives updates — this one is long-lived by design, and `git pull
+// && npm run setup` does not restart it — so a version read at startup is the
+// version this pane was born under rather than the version installed. It showed
+// v1.4.2 in the corner while the repo had moved on twice.
 
 let versionText = null
 let versionRead = 0
@@ -748,7 +753,7 @@ let versionCols = 0
 let versionDrawn = 0
 
 const drawVersion = (sprite) => {
-  if (config.showVersion === false || !ourVersion) return
+  if (config.showVersion === false) return
 
   const now = Date.now()
 
@@ -777,10 +782,12 @@ const drawVersion = (sprite) => {
     versionRead = now
     versionCols = cols
 
+    const ourVersion = installedVersion()
+
     try {
       versionText = cornerText(ourVersion, updateAvailable(), Math.max(0, cols - (sprite?.cols ?? 0) - 2))
     } catch {
-      versionText = `v${ourVersion}`
+      versionText = ourVersion ? `v${ourVersion}` : null
     }
   }
 
@@ -791,9 +798,21 @@ const drawVersion = (sprite) => {
   // Only where there is room for it beside whatever else is drawn.
   if (cols < versionText.length + 2 || rows < 2 || (sprite?.cols ?? 0) + 2 > from) return
 
+  // Cleared to the left, because this is written right against the edge.
+  //
+  // The padding used to go after the text, which is where leftovers would be if
+  // the line grew from a fixed start. It does not: it ends at the same column
+  // every time and begins wherever its length puts it. So when a long line —
+  // "pokemanion v1.9.0 available — run: cd ... && npm run setup" — was replaced
+  // by a short "v1.4.4", the short one started seventy columns further right and
+  // the padding after it cleaned a stretch that was already blank, leaving the
+  // whole left half of the old line on screen with the new one stamped onto the
+  // end of it. It read as "npm runv1.4.4".
   const pad = Math.max(0, versionDrawn - versionText.length)
 
-  process.stdout.write(`\x1b[${rows};${Math.max(1, from)}H\x1b[2m${versionText}\x1b[0m${' '.repeat(pad)}`)
+  process.stdout.write(
+    `\x1b[${rows};${Math.max(1, from - pad)}H${' '.repeat(pad)}\x1b[2m${versionText}\x1b[0m`,
+  )
   versionDrawn = versionText.length
 }
 
