@@ -238,10 +238,23 @@ const useSpecies = (name) => {
   // than it would have been; the other is scaled against it.
   const tallest = Math.max(idle.box.height, busy.box.height)
 
+  // Rounded up, because a pane is four rows and there is no such thing here as
+  // a small reduction.
+  //
+  // Venusaur's two halves differ by nineteen percent — a standing sprite beside
+  // a battle animation whose vines leave the top of the frame — and rounding
+  // down charged it a whole row, a quarter of its height. It had been full size
+  // as a guest, where both halves were the same sprite recoloured, and shrank
+  // the moment it was given artwork of its own. Nothing about the resting sprite
+  // changed; it was simply measured against a taller neighbour.
+  //
+  // Rounding up keeps the proportion where the pane is tall enough to show it
+  // and gives up on it where it is not, rather than spending a quarter of the
+  // sprite on a difference the eye reads as "about the same".
   const rowsFor = (sprite) => {
     const share = sprite.box.height / tallest
 
-    return Math.max(1, Math.round(paneRows * (share < RELATIVE_FLOOR ? 1 : share)))
+    return Math.max(1, Math.ceil(paneRows * (share < RELATIVE_FLOOR ? 1 : share)))
   }
 
   // Only re-render when it actually changes the row count — the common case is
