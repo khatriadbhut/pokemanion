@@ -33,7 +33,10 @@ Safe to run more than once.
 
 Then tell them the things the script cannot do for them:
 
-1. **Restart the agent** (Claude Code and/or Codex) — hooks load at startup.
+1. **Switch it on.** A clone's hooks are read when the agent starts, so restart
+   it. A plugin does not need that: `/reload-plugins` loads them into the session
+   you are already in. Either way the pane opens with the next session, or right
+   now if they type `--pikachu`.
 2. **Restart Ghostty** — it reads its config at startup.
 3. **Open a new terminal**, or `source ~/.zshrc`.
 4. **System Settings → Privacy & Security → Accessibility → enable Ghostty.**

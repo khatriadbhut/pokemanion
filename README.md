@@ -96,16 +96,24 @@ Then, at your agent:
 </table>
 
 Nothing to clone or build; the agent fetches the project itself and the sprites
-ship with it. Three things are left:
+ship with it.
 
-- **Restart your agent, and Ghostty.** Do this first. Both read their
-  configuration at startup, so until you do, nothing happens at all — the
-  install reports success and then behaves exactly as if you had not run it.
+Installing does not switch it on by itself. In Claude Code, `/reload-plugins`
+does that without restarting anything. Then type `--pikachu` and a Pokemon
+appears. In Codex, restart it.
+
+Two more, and neither is optional:
+
 - **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
   Accessibility. Skip it and everything installs perfectly and no pane ever
   appears.
-- **Open a new terminal**, or `source ~/.zshrc`, which picks up `claude
-  --pikachu`.
+- **Restart Ghostty**, which reads its configuration at startup, and **open a
+  new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
+
+Install it in the menu rather than by typing the command, if you are offered the
+choice: `/plugin` on its own lets you pick **user** scope, which is one Pokemon
+for every session. Installed against a single project it appears there and
+nowhere else, with nothing to say why.
 
 Already have it from source? Installing the plugin too is harmless. It stands
 aside instead of doubling up, and tells you how to switch.
