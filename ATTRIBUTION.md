@@ -90,9 +90,10 @@ unlisted rather than silently going unnamed.
 | `34-misty-resting.gif` | misty resting |
 | `35-misty-working.gif` | misty working |
 | `36-venusaur-resting.gif` | venusaur resting |
-| `37-venusaur-working.gif` | venusaur working |
+| `37-venusaur-working.gif` | kept, not currently used |
+| `38-venusaur-shiny.gif` | venusaur working |
 
-27 files.
+28 files.
 
 <!-- /files -->
 

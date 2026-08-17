@@ -269,7 +269,26 @@ export const ROSTER = [
       pane: ['Misty', 'Cerulean City Gym', 'Type : Water', 'Goal : Water Master'],
     },
   },
-  { name: 'venusaur', idle: 'assets/36-venusaur-resting.gif', busy: 'assets/37-venusaur-working.gif', busySpeed: 1 },
+  // Its Gen-5 sprite and the same sprite shiny, which is the arrangement most of
+  // this list uses — and the one Venusaur ended up back on after a battle
+  // animation was tried and taken out again.
+  //
+  // The battle art is still here, at 37, and it was good: clean pixel art, forty
+  // frames, the flower closing to a bud and bursting. What sank it was geometry
+  // rather than quality. Its vines reach up and out, so the frame it needs is
+  // 230x176 where Venusaur himself is 118x108 — the pane fits the scene, so the
+  // creature came out at 61% of the height and looked half the size of its
+  // resting half. Cropping the frame bought the size back and cost the vines,
+  // which were the point of the animation.
+  //
+  // And centring: the body sits in the middle of that wide frame while the
+  // resting sprite fills its own, so switching to work slid Venusaur sideways
+  // across the pane.
+  //
+  // Two halves of one file have none of these problems. Same frame, same size,
+  // same position — only the colour moves, which is the signal that reads
+  // fastest at four rows anyway.
+  { name: 'venusaur', idle: 'assets/36-venusaur-resting.gif', busy: 'assets/38-venusaur-shiny.gif' },
 ]
 
 // Showdown's Gen-5 animated set rather than PokeAPI's, which is the same

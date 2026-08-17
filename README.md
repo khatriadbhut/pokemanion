@@ -150,7 +150,7 @@ guests](#residents-and-guests) · [Settings](#settings) ·
 | **gengar**<br><sub>own animation</sub> | <img src="assets/23-gengar.gif" width="89" alt="gengar resting"> | <img src="assets/25-gengar-attack.gif" width="166" alt="gengar working"> |
 | **cubone**<br><sub>own animation</sub> | <img src="assets/21-cubone.gif" width="85" alt="cubone resting"> | <img src="assets/22-cubone-swinging.gif" width="97" alt="cubone working"> |
 | **misty**<br><sub>own animation</sub> | <img src="assets/34-misty-resting.gif" width="55" alt="misty resting"> | <img src="assets/35-misty-working.gif" width="44" alt="misty working"> |
-| **venusaur**<br><sub>own animation</sub> | <img src="assets/36-venusaur-resting.gif" width="83" alt="venusaur resting"> | <img src="assets/37-venusaur-working.gif" width="133" alt="venusaur working"> |
+| **venusaur**<br><sub>own animation</sub> | <img src="assets/36-venusaur-resting.gif" width="83" alt="venusaur resting"> | <img src="assets/38-venusaur-shiny.gif" width="83" alt="venusaur working"> |
 
 <!-- /gallery -->
 
