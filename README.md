@@ -50,7 +50,7 @@ is happening.
 </tr>
 </table>
 
-Sixteen hand-tuned residents ship with it. **1242 more** can be summoned by
+Seventeen hand-tuned residents ship with it. **1241 more** can be summoned by
 name and are fetched on the spot.
 
 <img src="assets/17-pokeball.gif" width="46" align="left" alt="a Pokeball opening">
@@ -126,7 +126,7 @@ guests](#residents-and-guests) · [Settings](#settings) ·
 [Working on it](docs/developer.md)**
 
 <details>
-<summary><b>All sixteen residents</b> — resting on the left, working on the right</summary>
+<summary><b>All seventeen residents</b> — resting on the left, working on the right</summary>
 
 <br>
 
@@ -150,6 +150,7 @@ guests](#residents-and-guests) · [Settings](#settings) ·
 | **gengar**<br><sub>own animation</sub> | <img src="assets/23-gengar.gif" width="89" alt="gengar resting"> | <img src="assets/25-gengar-attack.gif" width="166" alt="gengar working"> |
 | **cubone**<br><sub>own animation</sub> | <img src="assets/21-cubone.gif" width="85" alt="cubone resting"> | <img src="assets/22-cubone-swinging.gif" width="97" alt="cubone working"> |
 | **misty**<br><sub>own animation</sub> | <img src="assets/34-misty-resting.gif" width="55" alt="misty resting"> | <img src="assets/35-misty-working.gif" width="44" alt="misty working"> |
+| **venusaur**<br><sub>own animation</sub> | <img src="assets/36-venusaur-resting.gif" width="83" alt="venusaur resting"> | <img src="assets/37-venusaur-working.gif" width="133" alt="venusaur working"> |
 
 <!-- /gallery -->
 
@@ -289,11 +290,11 @@ Pressing escape is the hard case, because no hook fires for it.
 
 ## Residents and guests
 
-**Residents** are the 16 in `src/roster.mjs`: hand-tuned, always on disk,
+**Residents** are the 17 in `src/roster.mjs`: hand-tuned, always on disk,
 pre-rendered so a session starts instantly, and the only ones the rotation hands
 out.
 
-**Guests** are the other 1242. Naming one for the first time takes a few seconds
+**Guests** are the other 1241. Naming one for the first time takes a few seconds
 while it downloads and renders; after that it is instant. The least recently
 seen are evicted first, and one a pane is showing is never evicted.
 

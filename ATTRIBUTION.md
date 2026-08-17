@@ -89,8 +89,10 @@ unlisted rather than silently going unnamed.
 | `33-brock-walking.gif` | brock working |
 | `34-misty-resting.gif` | misty resting |
 | `35-misty-working.gif` | misty working |
+| `36-venusaur-resting.gif` | venusaur resting |
+| `37-venusaur-working.gif` | venusaur working |
 
-25 files.
+27 files.
 
 <!-- /files -->
 

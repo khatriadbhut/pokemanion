@@ -269,6 +269,7 @@ export const ROSTER = [
       pane: ['Misty', 'Cerulean City Gym', 'Type : Water', 'Goal : Water Master'],
     },
   },
+  { name: 'venusaur', idle: 'assets/36-venusaur-resting.gif', busy: 'assets/37-venusaur-working.gif', busySpeed: 1 },
 ]
 
 // Showdown's Gen-5 animated set rather than PokeAPI's, which is the same
