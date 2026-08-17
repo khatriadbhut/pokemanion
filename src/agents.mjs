@@ -121,12 +121,32 @@ export const pluginInstalls = () => {
       for (const install of [installs].flat()) {
         const root = install?.installPath
 
-        if (root && existsSync(join(root, 'bin', 'run.sh'))) found.set(root, install.version ?? null)
+        if (!root || !existsSync(join(root, 'bin', 'run.sh'))) continue
+
+        const at = Date.parse(install.lastUpdated ?? install.installedAt ?? '')
+
+        found.set(root, [install.version ?? null, Number.isFinite(at) ? at : 0])
       }
     }
   } catch {}
 
-  return [...found].map(([root, version]) => ({ root, version }))
+  // Most recently installed first, and sorted rather than assumed.
+  //
+  // An update leaves the version it replaced listed alongside the new one — the
+  // cache is stamped by version and the record keeps both — in whatever order
+  // the file happens to hold them. Taking the first without sorting meant taking
+  // whichever was written first, so a plugin that had just been updated was
+  // reported as the version it had just replaced, and the notice meant to
+  // announce the update decided it had already given it.
+  //
+  // By time rather than by version number, which would mean importing the
+  // comparison from update.mjs and that imports shell.mjs, which imports this
+  // file. The record already carries the answer, and "the one installed most
+  // recently" is the more honest question anyway — a downgrade is still the
+  // copy that is now in use.
+  return [...found]
+    .map(([root, [version, at]]) => ({ root, version, at }))
+    .sort((a, b) => b.at - a.at)
 }
 
 // `--claude` / `--codex` force a choice. Without one, whatever is installed.

@@ -58,6 +58,23 @@ const check = (name, ok, detail = '') => results.push({ name, ok, detail })
 mkdirSync(STATE_DIR, { recursive: true })
 writeFileSync(join(STATE_DIR, 'greeted'), 'smoke')
 
+// And the notice about a plugin being installed, for exactly the same reason.
+//
+// It is owed once per plugin version, so it fires on a machine that has the
+// plugin installed and stays silent on CI, which has none — which is the worst
+// shape for a test to have. It cost three checks the first time it ran here, in
+// the same way and in the same place as the hello above.
+//
+// With the version that is actually installed, because the record is keyed by
+// version: a made-up one reads as "a different plugin has appeared" and arms the
+// notice rather than spending it. That was the first attempt, and it failed in
+// precisely the way it was written to prevent.
+{
+  const { pluginInstalls } = await import('./agents.mjs')
+
+  writeFileSync(join(STATE_DIR, 'plugin-seen'), JSON.stringify({ version: pluginInstalls()[0]?.version ?? null }))
+}
+
 for (const name of MODULES) {
   try {
     await import(`./${name}.mjs`)
