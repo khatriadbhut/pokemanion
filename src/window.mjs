@@ -610,13 +610,16 @@ const stampOf = (path) => {
 // hook that could close it, so it would run until the terminal did. Uninstalling
 // left a Pokemon behind that had to be hunted down and killed by hand.
 //
-// Asked rarely: it reads two small files, and a pane that is a few seconds late
-// noticing it has been uninstalled has cost nobody anything.
+// Once a second, because it costs 36 microseconds — four small files read and
+// parsed. Against a pane already writing forty kilobytes a frame ten times a
+// second, that is nothing, and the first version of this made someone wait most
+// of a minute watching a sprite that should have been gone.
 //
-// Twice before believing it, because the answer comes from files that are
-// rewritten in place — an install being upgraded is momentarily absent from its
-// own record, and exiting on that would close a pane that is about to be fine.
-const UNINSTALL_EVERY = 20_000
+// Twice before believing it, a second apart. Those files are rewritten in place
+// and a plugin mid-update is briefly absent from its own record; two readings a
+// second apart agreeing is a removal, one is a glimpse of a rename. Unreadable
+// counts as installed, so the two-second wait is the whole cost of being sure.
+const UNINSTALL_EVERY = 1_000
 
 let registeredAt = Date.now()
 let missedOnce = false
