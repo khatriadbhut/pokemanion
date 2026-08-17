@@ -793,10 +793,18 @@ const drawVersion = (sprite) => {
 
   if (!versionText) return
 
-  const from = cols - versionText.length + 1
+  // One column short of the edge, and never in the last cell of the last row.
+  //
+  // Writing there is the oldest trap in terminal drawing: the cursor has nowhere
+  // to advance to, so the terminal wraps and scrolls the whole pane up a line.
+  // Every redraw did it, which pushed the previous corner up rather than
+  // replacing it — two version numbers stacked in the corner, the sprite
+  // creeping upwards, and whatever the shell had printed before the pane started
+  // drifting back into view.
+  const from = cols - versionText.length
 
   // Only where there is room for it beside whatever else is drawn.
-  if (cols < versionText.length + 2 || rows < 2 || (sprite?.cols ?? 0) + 2 > from) return
+  if (cols < versionText.length + 3 || rows < 2 || (sprite?.cols ?? 0) + 2 > from) return
 
   // Cleared to the left, because this is written right against the edge.
   //
