@@ -361,6 +361,38 @@ try {
         process.exit(0)
       }
 
+      // The handover, asked of the copy that is being handed over from.
+      //
+      // The plugin answers this too, by uninstalling whatever else holds the
+      // hooks — but only while it is standing down, and only it. Reaching this
+      // copy meant reaching a command with no branch, which fell through to the
+      // formatter for a Pokemon nobody has heard of and printed "no such one:
+      // undefined". Both hooks fire when both are installed, so typing it got
+      // that back regardless of which one obeyed.
+      //
+      // This side of it is simply leaving: unregister our own hooks and the
+      // plugin, which is already installed and idle, is what remains.
+      if (asked.kind === 'use-plugin') {
+        const { pluginInstalls } = await import('../src/agents.mjs')
+        const plugins = pluginInstalls()
+
+        if (plugins.length === 0) {
+          process.stderr.write('no plugin installed — this clone is all there is\n\n  /plugin install pokemanion@pokemanion\n')
+          process.exit(2)
+        }
+
+        const { spawnSync: handOver } = await import('node:child_process')
+        const done = handOver(process.execPath, [join(ROOT, 'install.mjs'), '--uninstall'], { encoding: 'utf8' })
+
+        process.stderr.write(
+          done.status === 0
+            ? `handed over — the plugin (v${plugins[0].version}) runs it now, ${ROOT} no longer does\n\n  restart the agent\n`
+            : `could not hand over: ${(done.stderr || done.stdout || 'no output').trim().split('\n')[0]}\n\n` +
+              `  try: cd ${ROOT} && npm run uninstall-statusline\n`,
+        )
+        process.exit(2)
+      }
+
       // What the pane's corner cannot fit.
       if (asked.kind === 'update') {
         const { available, installedVersion, updateCommand } = await import('../src/update.mjs')

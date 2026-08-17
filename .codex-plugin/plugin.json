@@ -1,6 +1,6 @@
 {
   "name": "pokemanion",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "A Pokemon in a terminal pane beside every session, resting while the agent waits and animating while it works.",
   "author": {
     "name": "khatriadbhut",

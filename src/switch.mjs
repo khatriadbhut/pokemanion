@@ -300,6 +300,13 @@ export const describe = (result, pool = available(), current = null, extra = 0) 
     )
   }
 
+  // Reaching here with nothing to name means a command nobody handled, not a
+  // Pokemon nobody has heard of. `--pokemanion use plugin` did exactly that on
+  // the copy with no branch for it, and what came back was "no such one:
+  // undefined" above a list of Pokemon — which blames the person typing for a
+  // gap in here.
+  if (!result.word) return `nothing here handles that\n\n${list}${rest}`
+
   const close = nearest(result.word)
 
   if (close) return `no such one: ${result.word}\n\ndid you mean: --${close}\n\n${list}${rest}`
