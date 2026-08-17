@@ -177,6 +177,44 @@ export const isRegistered = (root) => {
     if (text.includes(`${root}/bin/run.sh`)) return true
   }
 
+  // A plugin is live only if both halves agree, because they answer different
+  // questions and each is wrong on its own.
+  //
+  // `enabledPlugins` in a settings file is the switch: installing adds the name,
+  // uninstalling takes it away. `installed_plugins.json` says which version's
+  // folder is the current one, and it lags — after an uninstall it still listed
+  // the plugin, which is how this check first came to tell a pane it was fine
+  // while its plugin was being removed out from under it.
+  //
+  // Together they cover both ways a copy stops being the one in use: the whole
+  // plugin uninstalled, and this particular version replaced by a newer folder.
+  let switchedOn = null
+
+  for (const file of [join(homedir(), '.claude', 'settings.json'), join(process.cwd(), '.claude', 'settings.json')]) {
+    let enabled
+
+    try {
+      enabled = JSON.parse(readFileSync(file, 'utf8')).enabledPlugins
+    } catch {
+      continue
+    }
+
+    if (!enabled || typeof enabled !== 'object') continue
+
+    for (const [name, on] of Object.entries(enabled)) {
+      if (!name.startsWith('pokemanion')) continue
+
+      switchedOn = switchedOn || on !== false
+    }
+
+    if (switchedOn === null) switchedOn = false
+  }
+
+  // Nothing readable said anything either way. Not evidence of removal.
+  if (switchedOn === null) return true
+
+  if (!switchedOn) return false
+
   try {
     const text = readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8')
 
@@ -186,8 +224,8 @@ export const isRegistered = (root) => {
       for (const install of [installs].flat()) if (install?.installPath === root) return true
     }
   } catch {
-    // No plugin record at all is a normal machine, not a missing install — fall
-    // through to the answer below rather than treating it as proof of anything.
+    // Switched on, and no record to say which folder — believe the switch.
+    return true
   }
 
   return false
