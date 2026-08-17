@@ -33,10 +33,19 @@ const ANNOUNCED = join(STATE_DIR, 'announced-version')
 // laptop.
 const TRIED = join(STATE_DIR, 'checked-at')
 
-// Six hours rather than a day. The check is one detached curl with a five second
-// cap and nothing waits on it, so the old interval was buying nothing and cost a
-// day of not knowing. Bounded properly now that failures back off too.
-const EVERY = 6 * 60 * 60 * 1000
+// Fifteen minutes, which is as close to immediate as this should get.
+//
+// The check runs from the hook path, and hooks are frequent: a busy hour on the
+// machine this was written on fired a hundred and thirty of them. Unthrottled
+// that is a hundred and thirty requests an hour to raw.githubusercontent.com,
+// from one person, which is the sort of thing that gets a host rate-limited for
+// everyone. At fifteen minutes it is four an hour.
+//
+// So the interval is not protecting anyone from slowness — nothing waits on this
+// — it is about not asking the same question of somebody else's server over and
+// over. Four times an hour is polite and still means a new version is noticed
+// within a quarter of an hour of existing.
+const EVERY = 15 * 60 * 1000
 
 const SOURCE = 'https://raw.githubusercontent.com/khatriadbhut/pokemanion/main/package.json'
 
