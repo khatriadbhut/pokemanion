@@ -218,6 +218,20 @@ for (const agent of targets) {
   }
 }
 
+// The panes this copy still has out.
+//
+// Removing the hooks does not reach them: a pane is a long-lived process with no
+// idea its install has stood down, and once the hooks are gone there is nothing
+// left to close it either. After `--pokemanion use plugin` the old copy's
+// sprites went on animating beside the new install's, for sessions whose hooks
+// no longer existed, and the only way to be rid of them was to find them by hand.
+if (uninstalling) {
+  const { closeAllWindows } = await import('./src/companion.mjs')
+  const closed = closeAllWindows()
+
+  if (closed > 0) console.log(`\n  closed ${closed} pane${closed === 1 ? '' : 's'} this copy had open`)
+}
+
 console.log(
   uninstalling
     ? `\n  Done. Restart ${targets.map((agent) => agent.label).join(' and ')}.\n`

@@ -118,6 +118,32 @@ export const closeWindow = (id) => {
   return true
 }
 
+// Every pane this copy has out, closed.
+//
+// For handing over and for uninstalling, which are the same moment from the
+// pane's point of view: the thing that opened it is no longer the thing running.
+// Unregistering the hooks does not reach the panes — they are long-lived
+// processes with no idea their install has stood down — so after
+// `--pokemanion use plugin` the old copy's sprites went on animating beside the
+// new one's, for sessions whose hooks no longer existed. There is no hook left
+// to close them either, so they would have run until the terminal did.
+//
+// Ours by construction: this directory belongs to this install, and every pane
+// it opened wrote its pid here.
+export const closeAllWindows = () => {
+  let closed = 0
+
+  try {
+    for (const file of readdirSync(STATE_DIR)) {
+      if (!file.startsWith('window-') || !file.endsWith('.pid')) continue
+
+      if (closeWindow(file.slice('window-'.length, -'.pid'.length))) closed++
+    }
+  } catch {}
+
+  return closed
+}
+
 // Ghostty can only be told to split by pressing the key that splits it. There
 // is no command line route on macOS — `ghostty +new-window` answers "not
 // supported on this platform" — so this drives the keyboard through System
