@@ -98,10 +98,12 @@ Then, at your agent:
 Nothing to clone or build; the agent fetches the project itself and the sprites
 ship with it. Three things are left:
 
+- **Restart your agent, and Ghostty.** Do this first. Both read their
+  configuration at startup, so until you do, nothing happens at all — the
+  install reports success and then behaves exactly as if you had not run it.
 - **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
   Accessibility. Skip it and everything installs perfectly and no pane ever
   appears.
-- **Restart your agent and Ghostty.** Both read their configuration at startup.
 - **Open a new terminal**, or `source ~/.zshrc`, which picks up `claude
   --pikachu`.
 

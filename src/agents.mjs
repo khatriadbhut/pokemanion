@@ -92,6 +92,43 @@ export const otherInstalls = (ours) => {
   return [...roots]
 }
 
+// The same question from the other side: is there a plugin copy of this?
+//
+// `otherInstalls` cannot answer it. A clone writes its hooks into the agent's
+// settings, where they can be read back; a plugin's live in its own manifest
+// under a variable the agent expands, so nothing about it appears where that
+// function looks.
+//
+// It matters because of when each copy can speak. Hooks are read at startup, so
+// a plugin installed into a running session has nothing running — which is why
+// `/plugin install` says the plugin is active and then absolutely nothing
+// happens, and why the message explaining that could only ever arrive after a
+// restart. The clone is already running and can say it immediately.
+//
+// Returns the installed copies, newest first, as { root, version }.
+export const pluginInstalls = () => {
+  const found = new Map()
+
+  // What the agent believes is installed, which is not the same as what is on
+  // disk — the cache keeps old versions after an update.
+  try {
+    const text = readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8')
+    const entries = JSON.parse(text).plugins ?? {}
+
+    for (const [name, installs] of Object.entries(entries)) {
+      if (!name.startsWith('pokemanion')) continue
+
+      for (const install of [installs].flat()) {
+        const root = install?.installPath
+
+        if (root && existsSync(join(root, 'bin', 'run.sh'))) found.set(root, install.version ?? null)
+      }
+    }
+  } catch {}
+
+  return [...found].map(([root, version]) => ({ root, version }))
+}
+
 // `--claude` / `--codex` force a choice. Without one, whatever is installed.
 export const chosen = (argv = process.argv) => {
   const asked = AGENTS.filter((agent) => argv.includes(`--${agent.name}`))

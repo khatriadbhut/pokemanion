@@ -511,14 +511,31 @@ export const openWindow = (id, source = null, forced = null) => {
   if (isBackgroundAgent(id, source)) return false
 
   // A note left by `closeWindow` when a session ended before its pane had
-  // written a pid. It tells a pane that is still starting to stop — so a stale
-  // one would tell this new pane, opened deliberately, to quit the moment it
-  // drew its first frame.
-  if (forced) {
-    try {
-      unlinkSync(closedFileFor(id))
-    } catch {}
-  }
+  // written a pid. It tells a pane that is still starting to stop, and it is
+  // read by whichever pane starts next — including this one.
+  //
+  // Which is a problem the moment the same session comes back. `claude --resume`
+  // reuses the session id, so a session quit during the second or two its pane
+  // takes to start leaves a note that kills the pane the resume opens. The split
+  // appears and closes again, which is the same nothing-happened this project has
+  // spent long enough chasing.
+  //
+  // The note carries the time it was written, so it can be told apart from a
+  // useful one: while a pane could still be starting it has a job to do, and
+  // after that it is litter. An explicit ask clears it whatever its age, because
+  // naming a Pokemon is a clear request for a pane to put it in.
+  //
+  // Generous rather than tight — opening a pane means splitting a terminal,
+  // typing into it and booting node, and being a second too eager here brings
+  // back the orphaned sprite this note exists to prevent.
+  const STARTUP_GRACE_MS = 15_000
+
+  try {
+    const note = closedFileFor(id)
+    const left = Number(readFileSync(note, 'utf8').trim())
+
+    if (forced || !Number.isFinite(left) || Date.now() - left > STARTUP_GRACE_MS) unlinkSync(note)
+  } catch {}
 
   // A pane is already up for this session — resuming one whose window never
   // closed. Nothing needs opening, but an explicit ask still has to land, and

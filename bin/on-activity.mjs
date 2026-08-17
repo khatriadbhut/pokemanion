@@ -90,6 +90,61 @@ try {
   {
     const { isPluginRoot } = await import('../src/shell.mjs')
 
+    // The clone noticing the plugin, rather than the other way round.
+    //
+    // Everything below this is the plugin standing down and explaining itself,
+    // and none of it can run in the session where the plugin was installed —
+    // hooks are read when the agent starts, so a plugin installed into a running
+    // session has nothing running. `/plugin install` reports success and then
+    // the pane carries on exactly as before, with no message, which reads as the
+    // install having failed.
+    //
+    // So the copy that *is* running says it. Same facts, no restart, delivered
+    // in the session where the question was asked.
+    if (!isPluginRoot() && event === 'UserPromptSubmit') {
+      const { pluginInstalls } = await import('../src/agents.mjs')
+      const plugins = pluginInstalls()
+
+      if (plugins.length > 0) {
+        const { installedVersion, isNewer } = await import('../src/update.mjs')
+        const note = join(STATE_DIR, 'plugin-seen')
+
+        const ours = installedVersion()
+        const theirs = plugins[0].version
+
+        const said = (() => {
+          try {
+            return JSON.parse(readFileSync(note, 'utf8'))
+          } catch {
+            return null
+          }
+        })()
+
+        // Once per plugin version. Updating the plugin while this copy holds the
+        // hooks changes nothing visible, so a plugin that has just moved past us
+        // is worth another line — it is the moment someone would otherwise sit
+        // waiting for a new version that is installed and idle.
+        if (!said || said.version !== theirs) {
+          try {
+            mkdirSync(STATE_DIR, { recursive: true })
+            writeFileSync(note, JSON.stringify({ version: theirs }))
+          } catch {}
+
+          const newer = ours && theirs && isNewer(theirs, ours)
+
+          process.stderr.write(
+            newer
+              ? `Plugin v${theirs} installed and idle — this clone is v${ours} and still the one running.\n\n` +
+                '  --pokemanion use plugin   hand over to it\n' +
+                '  or update this one        git pull && npm run setup\n'
+              : `Plugin v${theirs ?? '?'} installed, but this clone is the one running it — one Pokemon, not two.\n\n` +
+                '  --pokemanion use plugin   hand over to the plugin\n',
+          )
+          process.exit(2)
+        }
+      }
+    }
+
     if (isPluginRoot()) {
       const { otherInstalls } = await import('../src/agents.mjs')
       const others = otherInstalls(ROOT)
