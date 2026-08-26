@@ -20,6 +20,7 @@ const MODULES = [
   'roster',
   'dex',
   'sprite',
+  'place',
   'switch',
   'companion',
   'prune',
@@ -576,6 +577,149 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
   })
 
   check('and keeps every transparent pixel transparent', holes.every((n) => n === 0), holes.join(' '))
+}
+
+// A frame is sent to the terminal once, then pointed at.
+//
+// The pane redraws forever, and it used to hand over the whole picture every
+// time: 92KB a frame, fourteen times a second, for a Pokemon sitting still.
+// Everything below is about the two halves of that being separable — and about
+// the one way the terminal loses its copy, which is a screen clear.
+{
+  const { emit, forget, REFRESH_EVERY } = await import('./place.mjs')
+
+  // Shaped the way chafa really emits it: a first APC of control data with no
+  // payload at all, then the pixels in chunks. Getting that wrong is what a
+  // first attempt did, and the terminal answered every placement with ENOENT.
+  const head = 'a=T,C=1,f=32,s=2,v=2,c=1,r=1,m=1,q=2'
+  const frame = (payload) => `\x1b_G${head}\x1b\\\x1b_Gm=1;${payload}\x1b\\\x1b_Gm=0\x1b\\`
+
+  const sprite = { frames: [frame('AAAA'), frame('BBBB')], ghost: frame('CCCC') }
+
+  const first = emit(sprite, 0)
+  const again = emit(sprite, 0)
+
+  check('the first play sends the whole picture', first.includes('AAAA'))
+  check('and is exactly what it always was, plus an id', first.replace(/i=\d+,/, '') === sprite.frames[0])
+  check('every play after it refers to that picture', again.startsWith('\x1b_Ga=p,') && again.length < 40, `${again.length} bytes against ${first.length}`)
+  check('and names the same one', again.match(/i=(\d+)/)?.[1] === first.match(/i=(\d+)/)?.[1])
+
+  // Where it goes travels with the placement; what it is made of does not,
+  // because the terminal already has that.
+  check('the placement keeps where and drops what', /c=1/.test(again) && /r=1/.test(again) && /C=1/.test(again) && !/f=32|v=2|m=1/.test(again))
+
+  // The pane's only way of hearing that the terminal has dropped a picture.
+  // Sent quietly it would draw nothing, forever, and say nothing about it.
+  check('and asks to be told when the picture is gone', /q=1/.test(again))
+
+  check('frames are told apart', emit(sprite, 1).includes('BBBB'))
+  check('the silhouette is drawn the same way', emit(sprite, 'ghost').includes('CCCC') && emit(sprite, 'ghost').startsWith('\x1b_Ga=p,'))
+
+  // The measured one: every erase sequence leaves stored pictures alone except
+  // ESC[2J, which takes them. A pane that kept pointing at them afterwards
+  // would draw nothing at all.
+  forget()
+
+  check('a clear means the terminal has none of it', emit(sprite, 0).includes('AAAA'))
+  check('and it is only sent once again after that', emit(sprite, 0).startsWith('\x1b_Ga=p,'))
+
+  check(
+    'a picture is re-sent once its refresh window passes',
+    emit(sprite, 0, Date.now() + REFRESH_EVERY + 1).includes('AAAA'),
+  )
+
+  const plain = { frames: ['not a kitty frame at all'], ghost: null }
+
+  check('anything else is passed through untouched', emit(plain, 0) === 'not a kitty frame at all' && emit(plain, 0) === 'not a kitty frame at all')
+
+  // The rule the whole thing rests on, checked where it can be broken. Writing
+  // CLEAR without saying so leaves the pane pointing at pictures the terminal
+  // has thrown away, and the symptom is an empty pane rather than an error.
+  const paneSource = readFileSync(join(ROOT, 'src', 'window.mjs'), 'utf8')
+  const clears = paneSource.match(/write\([^)]*\bCLEAR\b/g) ?? []
+
+  check('the pane clears the screen in exactly one place', clears.length === 1, `${clears.length} sites`)
+}
+
+// A Pokemon that has to be downloaded first gets the ball while you wait.
+//
+// This is the one bug in here that nothing could have caught by reading: the
+// pane saw the claim, found no sprites on disk for it, and returned. No error,
+// no log, nothing on screen — the Pokemon you had just replaced went on
+// standing there for the three seconds of the download, and the ball only
+// appeared afterwards to burst open over a wait that was already finished.
+// `--random` takes that path nearly every time, since it rolls from all 1258
+// names and only the residents and a handful of guests are ever on disk.
+//
+// So this drives a real pane, asks it for something that is not there, and
+// reads back what it drew. Sprites are told apart by the pixel width of the
+// image handed to the terminal, which is the one thing in the output that says
+// which of them it is.
+{
+  const { spawn } = await import('node:child_process')
+  const { unlinkSync } = await import("node:fs")
+
+  const session = 'smoke-waiting'
+  const claim = join(STATE_DIR, `window-${session}.species`)
+  
+
+  for (const path of [claim, join(STATE_DIR, `window-${session}.pid`)]) {
+    try {
+      unlinkSync(path)
+    } catch {}
+  }
+
+  // Read off the placement, not the picture: a frame only carries its pixels
+  // the first time it is drawn, and every draw after that is a reference. The
+  // column count rides along with both, and the ball is six columns where
+  // Pikachu is eight.
+  const colsIn = (text) => new Set([...text.matchAll(/\bc=(\d+)/g)].map((m) => m[1]))
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const pane = spawn(
+    process.execPath,
+    [join(ROOT, 'src', 'window.mjs'), '4', `--session=${session}`, '--species=pikachu'],
+    { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, PIXEL_RUNNER_KEEP_PANE: '1' } },
+  )
+
+  let drawn = ''
+
+  pane.stdout.setEncoding('latin1')
+  pane.stdout.on('data', (chunk) => {
+    drawn += chunk
+  })
+
+  // The opening ball is 37 frames at 40ms, so this is past it and settled on
+  // the Pokemon itself.
+  await pause(2200)
+
+  const settled = drawn.length
+
+  await pause(600)
+
+  const showing = colsIn(drawn.slice(settled))
+
+  // Named, and not on disk. Nothing fetches it here — what is being tested is
+  // what the pane does with a claim it cannot draw yet.
+  writeFileSync(claim, 'smokeasaurus')
+
+  await pause(1200)
+
+  const waiting = colsIn(drawn.slice(drawn.length - 2000))
+
+  pane.kill()
+
+  check(
+    'a pane asked for a Pokemon it has not got puts the ball up',
+    showing.size > 0 && waiting.size > 0 && [...waiting].some((size) => !showing.has(size)),
+    `was drawing ${[...showing].join(',')}, then ${[...waiting].join(',')}`,
+  )
+
+  for (const path of [claim, join(STATE_DIR, `window-${session}.pid`)]) {
+    try {
+      unlinkSync(path)
+    } catch {}
+  }
 }
 
 // Adding a character should be one entry in one file.

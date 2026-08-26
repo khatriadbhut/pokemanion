@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { scanLines } from './interrupt.mjs'
 import { ROOT, STATE_DIR, loadConfig, readState } from './config.mjs'
 import { MIN_DELAY, loadSprite } from './sprite.mjs'
+import { emit, forget as forgetImages } from './place.mjs'
 import { alignFor, busyFile, busySpeedFor, flipBusyFor, idleFile, touch, transitionFor } from './roster.mjs'
 import { isRegistered } from './agents.mjs'
 import { entry as dexEntry, paneCard } from './dex.mjs'
@@ -295,6 +296,11 @@ const SPECIES_FILE = join(STATE_DIR, `window-${sessionArg ?? 'default'}.species`
 // Pikachu. Both are the same situation and both now get the Pokeball.
 const waitingFor = pendingArg ?? (speciesArg && !playable(speciesArg) ? speciesArg : null)
 
+// Which Pokemon the ball on screen is waiting for, or null if it is not waiting
+// for one. Set at startup and, since the fix below, whenever a claim names a
+// Pokemon that has not been downloaded yet.
+let awaiting = null
+
 // The launcher already started the download for a `--pending`. This is only for
 // the case this pane worked out for itself, and starting a second one would
 // mean two processes writing the same files.
@@ -324,45 +330,99 @@ try {
 // second and a half of ceremony. Playing the ball on every work switch would
 // bury the signal under the celebration.
 //
-// The file is 86 frames and 3.4 seconds, most of it a ball sitting still: it
-// only starts moving at frame 32 and has finished bursting open by 67. The
-// window is the wobble and the burst, and it ends open — so the last thing on
-// screen is a ball mid-burst, handing over to the Pokemon it just released.
-const BALL_WINDOW = [30, 67]
-
-const ball = config.pokeball === false ? null : loadSprite('assets/17-pokeball.gif', 'ball', paneRows, null, false, BALL_WINDOW)
-
-// The other half of the same file: the ball before it starts moving.
+// What the file actually does, measured frame by frame rather than guessed at.
+// The old numbers here were wrong in a way that mattered: they described frames
+// 0-30 as "the ball at rest", when 4 to 40 are the ball rocking side to side.
 //
-// Frames 0 to 30 were never drawn by anything — the arrival window above starts
-// at the wobble. They are the ball at rest, which is exactly what a pane waiting
-// on a download should be showing.
+//   0-3    still
+//   4-40   rocking — it leans left, centre, right, over and over
+//   41-49  the burst: the lid lifts and the light comes out
+//   50-62  held open
+//   63-66  still open, beginning to settle
+//   70+    shut again
 //
-// This is what `claude --kyogre` looks like now when kyogre is not on disk yet.
-// The split opens on a closed ball instead of waiting, in silence, for a
-// download it was going to be killed in the middle of anyway. When the files
-// land, the claim file changes, and `checkSpecies` greets the new name with the
-// wobble and the burst it plays for every arrival. The ball opens and the
-// Pokemon is there, which is the right thing for a wait to turn into.
-const BALL_CLOSED = [0, 30]
+// One window, used three ways. It opens on eleven frames of rocking (30-40) and
+// then bursts (41-66), which is exactly the two things a wait is made of, so the
+// halves are taken as slices of this rather than loaded as sprites of their own.
+//
+// Not just to save the chafa run, though it saves that too — a pane that had to
+// render its own wait sprite would stall for a couple of seconds at the moment
+// somebody is standing there waiting. The reason is that `sharedBounds` measures
+// whatever frames it is given, so a separately loaded rock would be sized
+// against a box with no open lid in it, and the ball would visibly jump bigger
+// the instant it started to open. Sharing one box is what makes the wait and the
+// opening a single continuous animation rather than two that meet.
+const BALL_ARRIVING = [30, 67]
+const ROCK_FRAMES = 11
 
-if (waitingFor) {
+const ball = (() => {
+  if (config.pokeball === false) return null
+
   try {
-    const resting = loadSprite('assets/17-pokeball.gif', 'ballwait', paneRows, null, false, BALL_CLOSED)
+    return loadSprite('assets/17-pokeball.gif', 'ball', paneRows, null, false, BALL_ARRIVING)
+  } catch {
+    return null
+  }
+})()
 
-    idle = resting
-    busy = resting
+// `art` is dropped rather than carried over: it is the id the terminal knows
+// each picture by, worked out in place.mjs against a frame list this no longer
+// has. Left in, the opening would ask for the picture eleven frames earlier than
+// the one it is drawing.
+const sliceOf = (sprite, from, to) =>
+  sprite
+    ? { ...sprite, art: undefined, frames: sprite.frames.slice(from, to), delays: sprite.delays.slice(from, to) }
+    : null
 
-    // No silhouette flash between the two: they are the same ball, and nothing
-    // is transforming into anything yet.
-    transition = null
-  } catch {}
+const rocking = sliceOf(ball, 0, ROCK_FRAMES)
+const opening = sliceOf(ball, ROCK_FRAMES, ball?.frames.length ?? 0)
+
+// The pane waiting for a Pokemon that is not on disk yet.
+//
+// It had this at startup only — `claude --kyogre` opened on a ball — and no way
+// into it once running, which is the whole of the bug this fixes. A `--random`
+// mid-session writes the claim immediately and the sprites land a few seconds
+// later; `checkSpecies` used to see a name it could not draw and drop it, so the
+// old Pokemon stood there through the download and the ball only appeared when
+// it was already over, bursting open with nothing to wait for.
+const waitFor = (name) => {
+  if (!rocking) return false
+
+  awaiting = name
+  idle = rocking
+  busy = rocking
+
+  // No silhouette flash between the two: they are the same ball, and nothing is
+  // transforming into anything yet.
+  transition = null
+
+  // The ball is its own thing, not the Pokemon that was here a moment ago, so it
+  // does not inherit that one's corner.
+  align = 'left'
+
+  // At the tempo it was drawn. Both halves are the same sprite here, so the
+  // working speed-up applied to the whole wait and rocked it half again too
+  // fast — the artist's timing is already right.
+  busySpeed = 1
+
+  return true
 }
 
-const ballFrames = () =>
-  ball
-    ? ball.frames.map((frame, index) => ({ frame, sprite: ball, delay: Math.max(MIN_DELAY, ball.delays[index]) }))
+if (waitingFor) waitFor(waitingFor)
+
+// Frame numbers rather than the frames themselves, because which bytes draw a
+// frame is no longer fixed: the first play sends the picture and the rest refer
+// to it. Only `emit`, at the moment of writing, knows which one this is.
+const framesOf = (sprite) =>
+  sprite
+    ? sprite.frames.map((_, index) => ({ at: index, sprite, delay: Math.max(MIN_DELAY, sprite.delays[index]) }))
     : []
+
+const ballFrames = () => framesOf(ball)
+
+// Only the burst. For a pane that has been rocking: the wait ends on the frame
+// this begins on, so the ball simply carries on and opens.
+const openingFrames = () => framesOf(opening)
 
 // Sprites sit on the bottom of the pane rather than the top, so two of
 // different heights share a floor instead of a ceiling. Anything else has the
@@ -417,15 +477,65 @@ if (process.stdout.isTTY) {
   } catch {}
 }
 
-process.stdout.write(HIDE_CURSOR + CLEAR + DELETE_PLACEMENTS)
+// Clearing the screen, and saying so.
+//
+// Frames are sent to the terminal once and referred to by id after that — see
+// src/place.mjs. Every erase sequence measured leaves those pictures alone
+// except this one, which takes them with it, so anything drawn after a clear
+// has to be sent in full again. Going through here is what makes that
+// automatic; writing CLEAR directly is the way to get an empty pane.
+const clearPane = () => {
+  process.stdout.write(CLEAR)
+  forgetImages()
+}
+
+// A resize was not measured either way, being the one event that cannot be
+// provoked without asking macOS for permission to press keys. It reflows the
+// whole pane, so it is treated as a clear: the cost of being wrong is a blank
+// sprite, and the cost of being needlessly careful is one cycle of what this
+// used to spend every cycle.
+process.on('SIGWINCH', forgetImages)
+
+process.stdout.write(HIDE_CURSOR)
+clearPane()
+process.stdout.write(DELETE_PLACEMENTS)
 
 const stop = () => {
+  try {
+    if (process.stdin.isTTY) process.stdin.setRawMode(false)
+  } catch {}
+
   process.stdout.write(DELETE_PLACEMENTS + SHOW_CURSOR + '\n')
   process.exit(0)
 }
 
 process.on('SIGINT', stop)
 process.on('SIGTERM', stop)
+
+// Listening for the terminal to say a picture is gone.
+//
+// Frames are sent once and pointed at afterwards, and placements go out with
+// q=1: silence while they work, ENOENT when the picture they name is no longer
+// there. That answer is the only way this pane can find out, and what it does
+// about it is what it already does after a clear — forget, and let the next
+// frame send the picture again. Normally nothing is ever read here at all.
+//
+// Raw mode, because a terminal's answer has no newline on the end of it and a
+// cooked tty would sit on it forever. The cost is that ctrl-c arrives as a byte
+// rather than as a signal, so it is answered by hand.
+if (process.stdin.isTTY) {
+  try {
+    process.stdin.setRawMode(true)
+    process.stdin.resume()
+    process.stdin.on('data', (chunk) => {
+      const said = chunk.toString('latin1')
+
+      if (said.includes('\x03')) stop()
+
+      if (said.includes('ENOENT')) forgetImages()
+    })
+  } catch {}
+}
 
 // The state of one specific session, written by that session's hooks. Keyed by
 // session so a second Claude in another window cannot set this sprite running.
@@ -586,9 +696,9 @@ const transitionFrames = (from, to) => {
     // so trading silhouettes would show a white blob sitting still — it flashes
     // between white and the new colours instead.
     const sprite = evolving ? (i % 2 === 0 ? from : to) : to
-    const frame = evolving || i % 2 === 0 ? sprite.ghost : sprite.frames[0]
+    const at = evolving || i % 2 === 0 ? 'ghost' : 0
 
-    out.push({ frame, sprite, delay: Math.round(first + (last - first) * progress) })
+    out.push({ at, sprite, delay: Math.round(first + (last - first) * progress) })
   }
 
   return out
@@ -643,6 +753,13 @@ const checkUninstalled = () => {
   // them because the hooks happen to be registered elsewhere would be its own
   // small betrayal.
   if (!sessionArg) return
+
+  // The suite drives a real pane with a real session id, and a clone that has
+  // not been through `npm run setup` is not registered anywhere — so the pane
+  // under test would quietly stand itself down two seconds in and the test
+  // would fail for a reason that has nothing to do with what it is testing.
+  // Same shape as PIXEL_RUNNER_NO_WINDOW, and set in the same place.
+  if (process.env.PIXEL_RUNNER_KEEP_PANE === '1') return
 
   if (Date.now() - registeredAt < UNINSTALL_EVERY) return
 
@@ -703,9 +820,40 @@ const checkSpecies = () => {
     return
   }
 
-  // An unreadable or unknown name leaves the pane exactly as it is. Half a
-  // sprite is worse than the wrong sprite.
-  if (!name || !existsSync(idleFile(name)) || !existsSync(busyFile(name))) return
+  // An unreadable name leaves the pane exactly as it is.
+  if (!name) return
+
+  // Named, but not on disk yet — a guest being downloaded right now.
+  //
+  // This used to return, and that was the bug. The claim is written the instant
+  // you ask; the sprites land two or three seconds later. In that gap the pane
+  // went on showing the Pokemon you had just replaced, in silence, and the ball
+  // only turned up afterwards to burst open over a wait that was already done.
+  // `--random` takes this path nearly every time, because it rolls from all 1258
+  // names and only the residents and a few guests are ever on disk.
+  //
+  // So the ball goes up here instead, and rocks until the files arrive.
+  if (!playable(name)) {
+    // Already rocking for this one. The claim is rewritten when the download
+    // lands, and may be rewritten before that too; restarting the animation each
+    // time would make it stutter rather than rock.
+    if (awaiting === name) return
+
+    if (waitFor(name)) {
+      index = 0
+      clearPane()
+    }
+
+    return
+  }
+
+  // On disk. If the ball has been rocking for this one, it carries straight on
+  // into the burst — the rock ends on the frame the burst begins on, so the two
+  // are one continuous animation. A Pokemon that needed no wait gets the longer
+  // arrival, which opens with a little rocking of its own.
+  const wasWaiting = awaiting !== null
+
+  awaiting = null
 
   // Note there is no "same name, nothing to do" shortcut. Rewriting the current
   // name is the way to make a pane pick up a sprite that changed underneath it —
@@ -715,12 +863,12 @@ const checkSpecies = () => {
   useSpecies(name)
 
   index = 0
-  process.stdout.write(CLEAR)
+  clearPane()
 
   // A Pokemon arriving, so the ball opens for it. Queued rather than drawn
   // here: the frame loop is what owns the screen, and fighting it for the
   // cursor is how placements end up stacked on top of each other.
-  evolving = ballFrames()
+  evolving = wasWaiting ? openingFrames() : ballFrames()
   showCard(name)
 }
 
@@ -769,7 +917,7 @@ const checkCard = () => {
   }
 
   cardUntil = Date.now() + (config.cardMs ?? 8000)
-  process.stdout.write(CLEAR)
+  clearPane()
 }
 
 // Redrawn every frame rather than once, because the sprite underneath is
@@ -917,14 +1065,14 @@ const tick = () => {
     if (evolving.length === 0) {
       working = now
       index = 0
-      process.stdout.write(CLEAR)
+      clearPane()
     }
   }
 
   if (evolving.length > 0) {
     const step = evolving.shift()
 
-    process.stdout.write(DELETE_PLACEMENTS + originFor(step.sprite) + step.frame)
+    process.stdout.write(DELETE_PLACEMENTS + originFor(step.sprite) + emit(step.sprite, step.at))
 
     // The last silhouette hands over to the real sprite, started from its first
     // frame so it does not land mid-stride on the other one's index.
@@ -941,7 +1089,7 @@ const tick = () => {
   const sprite = working ? busy : idle
   const frame = index % sprite.frames.length
 
-  process.stdout.write(DELETE_PLACEMENTS + originFor(sprite) + sprite.frames[frame])
+  process.stdout.write(DELETE_PLACEMENTS + originFor(sprite) + emit(sprite, frame))
 
   drawCard(sprite)
   drawVersion(sprite)
@@ -970,6 +1118,11 @@ tick()
 // in would show an empty pane while it worked. A session opening is also the
 // only moment a guest can have become stale since the last one.
 setTimeout(async () => {
+  // Not under test. Pruning walks the whole cache — hundreds of megabytes — and
+  // it is synchronous, so the suite spent fourteen seconds waiting for a pane it
+  // only needed four seconds of.
+  if (process.env.PIXEL_RUNNER_KEEP_PANE === '1') return
+
   try {
     const { prune } = await import('./prune.mjs')
 

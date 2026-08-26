@@ -47,6 +47,98 @@ If that bothers you, drop `refreshInterval` from the `statusLine` block in
 `~/.claude/settings.json`: the sprite then only advances when a message updates,
 which still animates while Claude works but goes still when idle.
 
+## The pane sends each frame once
+
+A pane is a loop that redraws forever, and a resting Pokemon is not a still
+picture — it is an animation like any other. Nothing about that is wrong. What
+was wrong is that every redraw handed the terminal the whole picture again.
+
+chafa emits `a=T`, which is transmit *and* display in one command, with the
+pixels as uncompressed RGBA in base64. So the resting Pikachu was 92KB a frame
+at 14 frames a second — 354KB/s, 30GB a day, for a Pokemon sitting still. Worse,
+those keys carry no image id, so every frame was a new picture as far as the
+terminal was concerned: Ghostty's store filled at about 4MB/s against its
+320MB `image-storage-limit`, and once full it was evicting on every frame. That
+is why the cost climbed for a few minutes after a pane opened rather than being
+whatever it was going to be from the start.
+
+The protocol never asked for this. Those keys are two ideas glued together —
+`f,s,v,m` describe the pixels, `C,c,r` describe where to put them. Give the
+pixels an id and they are sent once and referred to afterwards:
+
+| | bytes |
+| --- | --- |
+| `a=T,i=42,C=1,f=32,s=128,v=136,c=8,r=4,m=1,q=2` + payload, the first play | 92KB |
+| `a=p,i=42,c=8,r=4,C=1,q=1`, every play after it | 31 |
+
+Measured on a real pane, four hundred draws cost 35.9MB and 497ms of Ghostty's
+time the old way, and 0.02MB and 6ms the new way. A pane settles at about
+0.5KB/s once its frames are up.
+
+Nothing about the picture changes, and that is checkable rather than hoped for:
+replaying both streams and comparing what was actually put on screen gives 463
+consecutive identical draws. The first play of a frame is still the exact bytes
+it always was — only an id is added.
+
+**One thing loses the terminal's copy, and it was measured rather than assumed:**
+
+| | |
+| --- | --- |
+| `a=d` delete placements — done every single frame | kept |
+| `ESC[0J`, `ESC[K`, `ESC[3J`, scrolling | kept |
+| `ESC[2J` clear screen | **lost** |
+
+So the pane clears the screen in exactly one place, `clearPane`, which forgets
+what the terminal is holding; the suite fails if a second `write(CLEAR)` ever
+appears. Anything unforeseen is caught by the placements going out with `q=1`:
+silence while they work, `ENOENT` when they do not, and the answer is the same
+— forget, and the next frame sends the picture again. Verified by injecting a
+clear the pane knew nothing about and watching it recover.
+
+## The wait is part of the animation
+
+`--random` rolls from all 1258 names while only the residents and a few guests
+are ever on disk, so it nearly always means a download — the claim is written the
+instant you ask, and the sprites land two or three seconds later.
+
+The pane used to do nothing at all with that gap. `checkSpecies` saw a name it
+had no files for and returned, so the Pokemon you had just replaced stood there
+through the whole download and the ball only appeared afterwards, bursting open
+over a wait that was already finished. The ball existed for exactly one case —
+`claude --kyogre` at launch, via `--pending` — and there was no way into it from
+a running pane.
+
+Now an unplayable claim puts the ball up and rocks until the files arrive.
+
+The frame windows come off the file, measured rather than guessed. The old
+numbers described frames 0-30 as "the ball at rest"; 4 to 40 are the ball
+rocking.
+
+| frames | |
+| --- | --- |
+| 0-3 | still |
+| 4-40 | rocking — leans left, centre, right, over and over |
+| 41-49 | the burst: the lid lifts, the light comes out |
+| 50-62 | held open |
+| 63-66 | open, beginning to settle |
+| 70+ | shut again |
+
+One window, `[30, 67]`, is loaded and then used three ways: its first eleven
+frames are the rock, the rest is the burst, and the whole thing is the arrival a
+Pokemon gets when there was nothing to wait for. Taking them as slices of one
+sprite rather than loading three matters twice over. A separately loaded rock
+would need its own chafa run — two seconds of stall at the exact moment somebody
+is standing there waiting — and `sharedBounds` measures whatever frames it is
+given, so a rock sized against a box with no open lid in it would make the ball
+visibly jump bigger the instant it started to open. One box is what makes the
+wait and the opening a single continuous animation rather than two that meet.
+
+The rock is three distinct images alternating, and the sway is small: ±12px in a
+320px frame, about 4.7% of the ball's width, and it tilts rather than travels.
+The watermark in the source gif is opaque, so `sharedBounds` counts it and the
+ball is drawn at 72% of the height it could have — cropping it would make the
+ball 38% taller and the rock 38% larger with it.
+
 ## Don't average when scaling down
 
 The first version of this box-filtered the sprite down and it came out as yellow
