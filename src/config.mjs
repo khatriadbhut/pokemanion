@@ -2,10 +2,28 @@
 // state, so the whole thing can be deleted in one go.
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+// The one thing that must outlive an update.
+//
+// Everything else this project writes lives under ROOT, which is the right place
+// for it: a cache belongs to the copy that built it, and deleting the folder
+// deletes the lot. But a plugin's ROOT is version-stamped —
+// `.../cache/pokemanion/pokemanion/1.7.0/` — so `/plugin update` does not update
+// a folder, it makes a new one. Everything in the old `.state` is simply gone.
+//
+// For a cache that is wasteful. For a record of something said to *you* it is a
+// bug: the hello is meant to be shown once, and it was shown again after every
+// single update, because the file remembering that it had been shown was in the
+// folder that got replaced.
+//
+// So facts about the person rather than about the copy live here, outside any
+// version. It holds one file today and should stay that small.
+export const HOME_DIR = join(homedir(), '.pokemanion')
 
 export const CONFIG_FILE = join(ROOT, 'config.json')
 export const FRAMES_FILE = join(ROOT, 'build', 'frames.json')

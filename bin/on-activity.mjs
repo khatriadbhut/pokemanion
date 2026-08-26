@@ -4,7 +4,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROOT, STATE_DIR, clearState, loadConfig, readState, writeState } from '../src/config.mjs'
+import { HOME_DIR, ROOT, STATE_DIR, clearState, loadConfig, readState, writeState } from '../src/config.mjs'
 import { closeWindow, openWindow, windowIsRunning } from '../src/companion.mjs'
 
 const WORKING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse'])
@@ -234,9 +234,23 @@ try {
   // only `greet`, deleting it on show would re-arm on the next hook and the
   // notice would repeat forever.
   const owed = join(STATE_DIR, 'greet')
-  const spent = join(STATE_DIR, 'greeted')
 
-  if (!existsSync(spent) && !existsSync(owed) && !existsSync(join(STATE_DIR, 'node-path'))) {
+  // Spent in two places, and it only has to be either.
+  //
+  // The one under ROOT was the original, and it is still written and still read
+  // so that a copy which has already said hello goes on knowing that. It is not
+  // enough on its own: a plugin's ROOT is version-stamped, so `/plugin update`
+  // leaves it behind in the old folder and the hello armed itself again. Once
+  // per update is not "shown once", it is a hook that eats a prompt every time
+  // you take an update.
+  //
+  // The one in HOME_DIR is the answer to "has this person been told", which is
+  // the question actually being asked, and no version can take it away.
+  const spent = join(STATE_DIR, 'greeted')
+  const spentForGood = join(HOME_DIR, 'greeted')
+  const greeted = existsSync(spentForGood) || existsSync(spent)
+
+  if (!greeted && !existsSync(owed) && !existsSync(join(STATE_DIR, 'node-path'))) {
     try {
       mkdirSync(STATE_DIR, { recursive: true })
       writeFileSync(owed, '')
@@ -268,7 +282,18 @@ try {
     // line then costs the message instead of repeating it every prompt forever.
     if (existsSync(owed)) {
       try {
-        writeFileSync(spent, new Date().toISOString())
+        const stamp = new Date().toISOString()
+
+        writeFileSync(spent, stamp)
+
+        // The half that survives the next update. Written first would be neater
+        // and is wrong: if this throws, the copy-local one below still records
+        // it and the hello is spent rather than repeated.
+        try {
+          mkdirSync(HOME_DIR, { recursive: true })
+          writeFileSync(spentForGood, stamp)
+        } catch {}
+
         rmSync(owed, { force: true })
       } catch {}
 
@@ -290,19 +315,30 @@ try {
       process.exit(2)
     }
 
-    // A version you do not have, mentioned once and never installed for you.
+    // A version you do not have, said in the pane rather than at you.
     //
-    // Same one-prompt cost as the hello, and for the same reason: a hook that
-    // lets your prompt through has no way to tell you anything. Marked announced
-    // before it is written, so a crash costs the message rather than repeating
-    // it. The check itself is a detached background fetch, throttled to once a
-    // day, that nothing ever waits on.
+    // This used to block a prompt, on the reasoning that a hook which lets your
+    // prompt through has no way to tell you anything. That was true when it was
+    // written and stopped being true when the pane grew a corner: the corner
+    // carries the same sentence, permanently, next to something you are already
+    // looking at, and it costs nothing.
+    //
+    // Blocking is not a small cost either. The prompt does not just pause, it
+    // comes back to you unsent — and a long one is then sitting in the terminal
+    // waiting to be sent a second time. Paying that to say something already
+    // written on screen is the wrong trade.
+    //
+    // The check itself still runs: it is a detached background fetch, throttled,
+    // that nothing waits on, and it is what keeps the corner current.
     if (loadConfig().updateCheck !== false) {
       const { checkInBackground, pendingUpdate, markAnnounced, notice } = await import('../src/update.mjs')
 
       checkInBackground()
 
-      const pending = pendingUpdate()
+      // Only where there is no pane to read it in. Someone with no Ghostty, or
+      // who has closed the pane, has no corner — and telling them nothing at all
+      // would mean an install that can never learn it is out of date.
+      const pending = windowIsRunning(session) ? null : pendingUpdate()
 
       if (pending) {
         markAnnounced(pending.latest)

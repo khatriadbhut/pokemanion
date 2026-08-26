@@ -230,6 +230,23 @@ if (uninstalling) {
   const closed = closeAllWindows()
 
   if (closed > 0) console.log(`\n  closed ${closed} pane${closed === 1 ? '' : 's'} this copy had open`)
+
+  // The one thing this project keeps outside its own folder.
+  //
+  // Everything else lives under ROOT so that deleting the folder deletes the
+  // lot, and that promise is worth keeping — `~/.pokemanion` holds only the
+  // record of the hello having been said, and it exists because a plugin's ROOT
+  // is version-stamped and so cannot remember anything across an update.
+  //
+  // Removed here so uninstalling really does leave nothing behind, which also
+  // means a genuine reinstall says hello again. That is right: the hello is the
+  // list of things a fresh install still needs you to do.
+  try {
+    const { rmSync } = await import('node:fs')
+    const { HOME_DIR } = await import('./src/config.mjs')
+
+    rmSync(HOME_DIR, { recursive: true, force: true })
+  } catch {}
 }
 
 console.log(

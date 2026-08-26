@@ -12,8 +12,9 @@
 // Usage: npm test
 
 import { readdirSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { ROOT, STATE_DIR } from './config.mjs'
+import { HOME_DIR, ROOT, STATE_DIR } from './config.mjs'
 
 const MODULES = [
   'config',
@@ -1410,12 +1411,19 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
       const nodePath = join(STATE_DIR, 'node-path')
       const hadNodePath = existsSync(nodePath) ? read(nodePath, 'utf8') : null
 
+      // The copy of that record which lives outside any version, and therefore
+      // outside this repository. Saved and put back, because it is the machine's
+      // and not the suite's to remove.
+      const forGood = join(HOME_DIR, 'greeted')
+      const hadForGood = existsSync(forGood) ? read(forGood, 'utf8') : null
+
       // Nothing is planted but the conditions: no record of a setup having run,
       // and no record of having said hello. Arming it by hand would test the
       // printing and skip the part that decides whether to.
       mkdirSync(STATE_DIR, { recursive: true })
       rmSync(owed, { force: true })
       rmSync(spent, { force: true })
+      rmSync(forGood, { force: true })
       rmSync(nodePath, { force: true })
 
       const say = (prompt) =>
@@ -1432,6 +1440,19 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
         `first exit ${first.status}, second exit ${second.status}`,
       )
 
+      // And the thing that makes "once" survive an update.
+      //
+      // A plugin's ROOT carries its version, so `/plugin update` does not update
+      // a folder — it makes a new one, with an empty .state. The record above
+      // stays behind in the old one, the hello arms itself again, and it ate a
+      // prompt on every single update. The copy in HOME_DIR is the one that
+      // cannot be left behind, so this is the check that the bug is fixed.
+      check(
+        'and the record of it survives an update',
+        existsSync(forGood),
+        forGood.replace(homedir(), '~'),
+      )
+
       // Left spent rather than cleared. Anything after this that drives a prompt
       // through the real handler would otherwise have it eaten — which is what
       // happened on CI, where a fresh checkout has no node-path and the hello
@@ -1440,6 +1461,70 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
       writeFileSync(spent, 'smoke')
       rmSync(sessionStateFile(greetSession), { force: true })
       if (hadNodePath !== null) writeFileSync(nodePath, hadNodePath)
+
+      // Put the machine back exactly as it was found, whether that was greeted
+      // or not.
+      if (hadForGood === null) rmSync(forGood, { force: true })
+      else writeFileSync(forGood, hadForGood)
+    }
+
+    // An update you have not taken is said in the pane, not at you.
+    //
+    // It used to block a prompt to say it — and blocking does not pause a
+    // prompt, it hands it back unsent, so a long one is left sitting in the
+    // terminal to be sent again. The pane's corner carries the same sentence
+    // permanently, so the only install that still needs telling is one with no
+    // pane to tell it in.
+    {
+      const { STATE_DIR: dir } = await import('./config.mjs')
+      const version = join(dir, 'latest-version')
+      const announced = join(dir, 'announced-version')
+      const had = existsSync(version) ? read(version, 'utf8') : null
+      const hadAnnounced = existsSync(announced) ? read(announced, 'utf8') : null
+
+      // A version nobody will ever ship, so this cannot pass by accident.
+      writeFileSync(version, JSON.stringify({ at: Date.now(), version: '99.0.0' }))
+      rmSync(announced, { force: true })
+
+      const ask = (id) =>
+        run('bin/on-activity.mjs', {
+          input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: id, prompt: 'an ordinary question' }),
+        })
+
+      // A pane of its own, claimed the way a real one claims it: this process is
+      // alive, so the pid in the file answers to signal 0.
+      const withPane = 'smoke-update-pane'
+      const pidFile = join(dir, `window-${withPane}.pid`)
+
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(pidFile, String(process.pid))
+
+      const quiet = ask(withPane)
+
+      rmSync(pidFile, { force: true })
+      rmSync(sessionStateFile(withPane), { force: true })
+
+      check(
+        'a pane means the update is not announced at you',
+        quiet.status === 0 && !/is out/.test(quiet.stderr),
+        `exit ${quiet.status}`,
+      )
+
+      const noPane = 'smoke-update-nopane'
+      const loud = ask(noPane)
+
+      rmSync(sessionStateFile(noPane), { force: true })
+
+      check(
+        'and no pane still means you are told once',
+        loud.status === 2 && /v99\.0\.0 is out/.test(loud.stderr),
+        `exit ${loud.status}`,
+      )
+
+      rmSync(announced, { force: true })
+      if (had === null) rmSync(version, { force: true })
+      else writeFileSync(version, had)
+      if (hadAnnounced !== null) writeFileSync(announced, hadAnnounced)
     }
 
     // Summoning something not yet downloaded must not go to the network.
