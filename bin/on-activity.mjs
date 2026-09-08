@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { HOME_DIR, ROOT, STATE_DIR, clearState, loadConfig, readState, writeState } from '../src/config.mjs'
-import { closeWindow, openWindow, windowIsRunning } from '../src/companion.mjs'
+import { closeWindow, openWindow, paneSessionFor, windowIsRunning } from '../src/companion.mjs'
 
 const WORKING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse'])
 const IDLE = new Set(['Stop', 'SessionEnd', 'SessionStart'])
@@ -315,6 +315,14 @@ try {
       process.exit(2)
     }
 
+    // Which pane this prompt is aimed at.
+    //
+    // Its own, unless it is an agent parked in someone else's window — then
+    // theirs, because that is the pane on screen in front of whoever typed
+    // this. Resolved here rather than at the top, so the events that fire on
+    // every tool call do not pay for a directory read they never look at.
+    const pane = paneSessionFor(session)
+
     // A version you do not have, said in the pane rather than at you.
     //
     // This used to block a prompt, on the reasoning that a hook which lets your
@@ -338,7 +346,7 @@ try {
       // Only where there is no pane to read it in. Someone with no Ghostty, or
       // who has closed the pane, has no corner — and telling them nothing at all
       // would mean an install that can never learn it is out of date.
-      const pending = windowIsRunning(session) ? null : pendingUpdate()
+      const pending = windowIsRunning(pane) ? null : pendingUpdate()
 
       if (pending) {
         markAnnounced(pending.latest)
@@ -355,7 +363,7 @@ try {
 
     if (asked) {
       const pool = available()
-      const file = speciesFileFor(session)
+      const file = speciesFileFor(pane)
 
       let current = null
 
@@ -491,7 +499,7 @@ try {
 
             try {
               mkdirSync(STATE_DIR, { recursive: true })
-              writeFileSync(`${STATE_DIR}/window-${String(session).replace(/[^\w.-]/g, '')}.card`, paneCard(entry(mine)).join('\n'))
+              writeFileSync(`${STATE_DIR}/window-${String(pane).replace(/[^\w.-]/g, '')}.card`, paneCard(entry(mine)).join('\n'))
             } catch {}
 
             // One line rather than none. The prompt is erased either way, and a
@@ -596,7 +604,7 @@ try {
 
         mkdirSync(STATE_DIR, { recursive: true })
         writeFileSync(file, asked.name)
-        rememberSpecies(session, asked.name, asked.rolled ? 'rolled' : 'switched')
+        rememberSpecies(pane, asked.name, asked.rolled ? 'rolled' : 'switched')
 
         // No pane and a Pokemon that has to be downloaded — both at once, which
         // is the worst version of this and the one worth handling properly.
@@ -607,7 +615,7 @@ try {
         // Only if that actually opened something. A machine with no Ghostty gets
         // false back, and the download still has to happen for the pane it will
         // eventually have.
-        const opened = !windowIsRunning(session) && openWindow(session, 'switch', asked.name)
+        const opened = !windowIsRunning(pane) && openWindow(pane, 'switch', asked.name)
 
         if (!opened) {
           const child = spawn(process.execPath, [join(ROOT, 'src', 'fetch.mjs'), asked.name, file, previous], {
@@ -643,7 +651,7 @@ try {
         // `--gengar` and having the pane come back as something else after a
         // restart is the same bug as the rotation one, arrived at from the
         // other direction: the switch was never written anywhere that lasts.
-        rememberSpecies(session, asked.name, asked.rolled ? 'rolled' : 'switched')
+        rememberSpecies(pane, asked.name, asked.rolled ? 'rolled' : 'switched')
 
         // Close the pane and `--gengar` had nothing to switch. The claim was
         // written correctly, into a file nothing was reading, and the command
@@ -653,7 +661,7 @@ try {
         // Naming a Pokemon is a clear enough request for a pane to show it in.
         // Forced, because the pane has to come back as the one just typed rather
         // than re-running the usual decision, which a launch flag outranks.
-        if (!windowIsRunning(session)) openWindow(session, 'switch', asked.name)
+        if (!windowIsRunning(pane)) openWindow(pane, 'switch', asked.name)
       }
 
       // Exit 2 blocks the prompt and erases it, and shows this to you as the

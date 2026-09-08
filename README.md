@@ -78,8 +78,16 @@ Then, at your agent:
 
 ```
 /plugin marketplace add khatriadbhut/pokemanion
+```
+
+then
+
+```
 /plugin install pokemanion@pokemanion
 ```
+
+One at a time. Claude Code's prompt joins a two-line paste into one line, and
+the first command swallows the second.
 
 </td>
 <td valign="top" width="50%">
@@ -87,13 +95,25 @@ Then, at your agent:
 **Codex**
 
 ```
-/plugin marketplace add khatriadbhut/pokemanion
-/plugin add pokemanion@pokemanion
+/plugins
 ```
+
+Then **Add Marketplace**, enter
+`khatriadbhut/pokemanion`, and install
+pokemanion from the tab that appears.
 
 </td>
 </tr>
 </table>
+
+Codex's is a browser, not a command that takes arguments — there is no
+`/plugin`, singular. If you would rather type it, the same thing from a shell,
+before you start Codex:
+
+```sh
+codex plugin marketplace add khatriadbhut/pokemanion
+codex plugin add pokemanion@pokemanion
+```
 
 Nothing to clone or build; the agent fetches the project itself and the sprites
 ship with it.
@@ -110,10 +130,10 @@ Two more, and neither is optional:
 - **Restart Ghostty**, which reads its configuration at startup, and **open a
   new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
 
-Install it in the menu rather than by typing the command, if you are offered the
-choice: `/plugin` on its own lets you pick **user** scope, which is one Pokemon
-for every session. Installed against a single project it appears there and
-nowhere else, with nothing to say why.
+In Claude Code, install it in the menu rather than by typing the command, if you
+are offered the choice: `/plugin` on its own lets you pick **user** scope, which
+is one Pokemon for every session. Installed against a single project it appears
+there and nowhere else, with nothing to say why.
 
 Already have it from source? Installing the plugin too is harmless. It stands
 aside instead of doubling up, and tells you how to switch.
@@ -218,9 +238,17 @@ claude --resume --charizard  # combines with everything else
 ## Using it with Codex
 
 <details>
-<summary><b>Two things specific to Codex</b></summary>
+<summary><b>Three things specific to Codex</b></summary>
 
 <br>
+
+**Its plugin commands are not Claude Code's.** Codex has no `/plugin`; it has
+**`/plugins`**, which opens a browser rather than taking arguments, and adding
+this marketplace is the **Add Marketplace** tab inside it. From a shell it is
+`codex plugin marketplace add khatriadbhut/pokemanion`, then
+`codex plugin add pokemanion@pokemanion` — note `add`, where Claude Code says
+`install`. There is no `/reload-plugins` either, so a fresh session is the only
+way to pick a new plugin up.
 
 **It will ask you to trust the hooks.** They are worth reading first, in
 `~/.codex/hooks.json`. Codex silently skips any it has not reviewed, so after

@@ -1242,6 +1242,58 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
   }
 }
 
+// Which pane a prompt is aimed at.
+//
+// The bug: a conversation forked into a background agent kept the same
+// scrollback, so it looked like the same conversation — but it had a new
+// session id, and `--random` typed at it wrote a claim into a species file no
+// pane was watching. Three rolls in a row answered "fetching it, back in a
+// moment" and the sprite on screen never moved off the one from before the
+// fork.
+//
+// The registry is Claude Code's, under ~/.claude/sessions, one file per running
+// process. Invented here rather than read, so what is tested is the rule and
+// not whatever this machine happens to be running.
+{
+  const { hostSession } = await import('./companion.mjs')
+
+  const HOST = 'host-0001'
+  const AGENT = 'agent-0001'
+  const yes = () => true
+  const no = () => false
+
+  const rows = [
+    { pid: 100, sessionId: HOST, kind: 'interactive', parkedJobId: 'job-a', updatedAt: 2 },
+    { pid: 200, sessionId: AGENT, kind: 'bg', jobId: 'job-a', updatedAt: 3 },
+    { pid: 300, sessionId: 'elsewhere-0001', kind: 'interactive', updatedAt: 9 },
+  ]
+
+  check('a parked agent aims at the window it is parked in', hostSession(AGENT, rows, yes) === HOST)
+
+  // The whole of what was asked for: that window, not some other one. The
+  // decoy is more recently updated and would win any "most recent pane" rule.
+  check('and not at some other window', hostSession(AGENT, rows, yes) !== 'elsewhere-0001')
+
+  check('an ordinary session is its own pane', hostSession(HOST, rows, yes) === HOST)
+  check('and so is one the registry has never heard of', hostSession('unknown-0001', rows, yes) === 'unknown-0001')
+
+  // A host that has exited is a window no longer on screen, and its claim would
+  // be read by nothing. Better the agent points at itself than at a file with
+  // no pane behind it.
+  check('a dead host is not written to', hostSession(AGENT, rows, no) === AGENT)
+
+  // Nobody watching it at all — a real background agent, which is the case the
+  // pane has always and deliberately refused to open for.
+  check('an agent nobody has parked stays its own', hostSession(AGENT, [rows[1], rows[2]], yes) === AGENT)
+
+  // The job is named after the session that made it, so today the two agree.
+  // Matching on `jobId` rather than on the id is what keeps this working the
+  // day they stop agreeing.
+  const misnamed = [{ pid: 100, sessionId: HOST, kind: 'interactive', parkedJobId: 'agent-00', updatedAt: 2 }, rows[1]]
+
+  check('the link is the job id, not the session id', hostSession(AGENT, misnamed, yes) === AGENT)
+}
+
 // The three files that run their work the moment they are loaded.
 //
 // `MODULES` above cannot reach any of them: importing one would perform its job

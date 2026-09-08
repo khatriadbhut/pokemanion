@@ -15,6 +15,10 @@ opens the split by driving Ghostty through AppleScript. It needs `chafa`
 The quickest route is the plugin, which registers the hooks and needs no clone:
 
     /plugin marketplace add khatriadbhut/pokemanion
+
+then, as a separate prompt — Claude Code joins a two-line paste into one line
+and the first command swallows the second:
+
     /plugin install pokemanion@pokemanion
 
 It cannot install Ghostty — a GUI app that asks for a password — but it does

@@ -445,6 +445,81 @@ const JOBS_DIR = join(homedir(), '.claude', 'jobs')
 export const isBackgroundAgent = (id, source = null) =>
   fileExists(join(JOBS_DIR, String(id ?? '').slice(0, 8)))
 
+// The window a parked agent is being watched in.
+//
+// A background agent has no terminal of its own, so it gets no pane — but it is
+// not invisible. Claude Code parks it inside an ordinary session's window and
+// draws it there, so `--random` typed at an agent looks exactly like `--random`
+// typed at the session it was forked from. It was not the same: the claim went
+// to a species file no pane was watching, the sprite on screen never moved, and
+// the reply still said "back in a moment". Three rolls in a row, and the pane
+// sat on the one from before the fork.
+//
+// Claude Code writes a file per running process under ~/.claude/sessions. A
+// parked agent's own file says `kind: "bg"` and carries its `jobId`; the
+// interactive session hosting it names that same job in `parkedJobId`. So the
+// window to change is the one pointing back at this agent — not the focused
+// one, not the newest, which would move a sprite in a window nobody was looking
+// at and leave this one still wrong.
+//
+// The host has to still be alive. A session that has exited is a window that is
+// no longer on screen, and its claim would be read by nothing.
+//
+// Everything else is its own pane, which is what every caller assumed before:
+// an ordinary session, an agent nobody has parked, a registry that has moved on
+// or was never written.
+const CLAUDE_SESSIONS_DIR = join(homedir(), '.claude', 'sessions')
+
+const registeredSessions = () => {
+  const rows = []
+
+  try {
+    for (const name of readdirSync(CLAUDE_SESSIONS_DIR)) {
+      if (!name.endsWith('.json')) continue
+
+      try {
+        rows.push(JSON.parse(readFileSync(join(CLAUDE_SESSIONS_DIR, name), 'utf8')))
+      } catch {}
+    }
+  } catch {}
+
+  return rows
+}
+
+const processAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Split from paneSessionFor for the same reason chooseSpecies is split from
+// openWindow: the rule can then be tested against invented registries, rather
+// than against whatever happens to be running on the machine at the time.
+export const hostSession = (id, rows, alive = processAlive) => {
+  if (!id) return id
+
+  const self = rows.find((row) => row.sessionId === id)
+
+  if (!self || self.kind !== 'bg') return id
+
+  // `jobId` rather than the id itself, because the two only happen to agree —
+  // the job is named with the first eight characters of the session that made
+  // it, and nothing promises that stays true.
+  const job = self.jobId ?? String(id).slice(0, 8)
+
+  const host = rows
+    .filter((row) => row.sessionId && row.parkedJobId === job && alive(row.pid))
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
+
+  return host ? host.sessionId : id
+}
+
+export const paneSessionFor = (id) => hostSession(id, registeredSessions())
+
 // Who this session gets, and the whole of that decision.
 //
 // Three rules, in this order, and the order is the point:
