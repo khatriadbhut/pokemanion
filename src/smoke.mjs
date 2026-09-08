@@ -37,6 +37,8 @@ const MODULES = [
   'shell',
   'assigned',
   'ghostty',
+  'kitty',
+  'launcher',
   'hint',
   'agents',
   'update',
@@ -1294,6 +1296,172 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
   check('the link is the job id, not the session id', hostSession(AGENT, misnamed, yes) === AGENT)
 }
 
+// Which terminal opens the pane.
+//
+// The rule is tested against invented machines rather than this one, which is
+// the entire reason chooseLauncher takes its platform, environment and both
+// "is it installed?" questions as arguments. A suite that could only ask about
+// the machine it runs on could check exactly one of these nine rows, and it
+// would be the row that already worked.
+{
+  const { chooseLauncher, launchCommand, paneArgv, splitBias, terminalRows } = await import('./launcher.mjs')
+
+  const all = () => true
+  const none = () => false
+  const only = (...ok) => (what) => ok.includes(what)
+
+  const at = (platform, env, exists = all, installed = all) => chooseLauncher(platform, env, exists, installed)?.name ?? null
+
+  // The one that matters most: nothing about macOS + Ghostty may change. It is
+  // the only tested setup and everybody is on it.
+  check('a Ghostty session on macOS still goes through AppleScript', at('darwin', { TERM_PROGRAM: 'ghostty' }) === 'ghostty-macos')
+
+  // And it is chosen on the app being installed, not on sitting in one —
+  // windowMode "window" opens a Ghostty of its own and never required that.
+  check('and so does one that is not sitting in a terminal at all', at('darwin', {}) === 'ghostty-macos')
+
+  // The CLI launchers sit above it in the list, so this is the guard that says
+  // why that is safe: neither variable is set in a Ghostty, so a Ghostty
+  // session falls past both to the path it always took.
+  check('a Mac with no WezTerm or kitty variables reaches Ghostty', at('darwin', { TERM: 'xterm-ghostty' }) === 'ghostty-macos')
+
+  // What the order does buy.
+  check('a Mac sitting in WezTerm splits WezTerm, not Ghostty', at('darwin', { WEZTERM_PANE: '2' }) === 'wezterm')
+  check('a Mac sitting in kitty splits kitty', at('darwin', { KITTY_LISTEN_ON: 'unix:/tmp/k' }) === 'kitty')
+
+  // Linux, which had no route at all before this.
+  check('Linux in WezTerm', at('linux', { WEZTERM_PANE: '0' }, only('wezterm'), none) === 'wezterm')
+  check('Linux in kitty', at('linux', { KITTY_LISTEN_ON: 'unix:@k' }, only('kitty'), none) === 'kitty')
+  check('Linux in Ghostty', at('linux', { TERM_PROGRAM: 'ghostty' }, only('ghostty'), none) === 'ghostty-linux')
+
+  // Ghostty is recognised three ways because only the binary check is reliable.
+  // $TERM_PROGRAM comes from shell integration, which can be switched off or
+  // lost to a shell that never sourced it — and a Linux user losing their pane
+  // silently is the failure this is guarding against.
+  check('and by the variable the app exports', at('linux', { GHOSTTY_RESOURCES_DIR: '/usr/share/ghostty' }, only('ghostty'), none) === 'ghostty-linux')
+  check('and by its terminfo name', at('linux', { TERM: 'xterm-ghostty' }, only('ghostty'), none) === 'ghostty-linux')
+  check('but not by having the binary alone', at('linux', { TERM: 'xterm-256color' }, only('ghostty'), none) === null)
+
+  // Both halves of a detection are required. Having the binary is not being in
+  // the terminal, and being in the terminal is not having its command line.
+  check('WezTerm installed but not being used is not chosen', at('linux', {}, only('wezterm'), none) === null)
+  check('a WezTerm pane with no wezterm binary is not chosen', at('linux', { WEZTERM_PANE: '1' }, none, none) === null)
+
+  // The kitty one is a different question from "am I in kitty", and it is the
+  // question that matters: $KITTY_WINDOW_ID is set whether or not remote
+  // control is allowed, so detecting on it would mean choosing kitty and then
+  // failing on every launch.
+  check('kitty without remote control is not chosen', at('linux', { KITTY_WINDOW_ID: '3' }, only('kitty'), none) === null)
+
+  // Nothing here at all, which is a real answer and the common one.
+  check('a Linux in GNOME Terminal gets nothing', at('linux', { TERM_PROGRAM: 'gnome-terminal' }, none, none) === null)
+  check('a Mac with no Ghostty and no CLI terminal gets nothing', at('darwin', {}, none, none) === null)
+
+  // The commands themselves. Checked as argv rather than as a string, because
+  // that is how they are handed to spawn — a quoting bug in a repo that may sit
+  // in a path with a space in it is exactly what argv is for.
+  const plan = { rows: 4, cols: 34, argv: ['node', 'window.mjs'], env: { WEZTERM_PANE: '7', KITTY_LISTEN_ON: 'unix:@k', KITTY_WINDOW_ID: '3' }, rowsAvailable: 40 }
+  const wez = chooseLauncher('linux', { WEZTERM_PANE: '7' }, only('wezterm'), none)
+  const kit = chooseLauncher('linux', { KITTY_LISTEN_ON: 'unix:@k' }, only('kitty'), none)
+  const gho = chooseLauncher('linux', { TERM_PROGRAM: 'ghostty' }, only('ghostty'), none)
+
+  const [wezProgram, wezArgs] = launchCommand(wez, 'split', plan)
+
+  // rows + 1: the sprite's rows, plus the one the prompt sits on. The same
+  // number the Ghostty window path passes as --window-height, and the reason a
+  // pane is a strip rather than half the window.
+  check('WezTerm is asked for exactly the pane height in cells', wezProgram === 'wezterm' && wezArgs.includes('--cells') && wezArgs[wezArgs.indexOf('--cells') + 1] === '5')
+
+  // Aimed at this session's pane rather than at whatever has focus. This is the
+  // thing the keystroke path cannot do, and it is why opening a pane for a
+  // background agent used to cut whichever window you were looking at in half.
+  check('and at this pane, not the focused one', wezArgs[wezArgs.indexOf('--pane-id') + 1] === '7')
+
+  // Everything after -- is the pane, untouched. A launcher that ate an argument
+  // would produce a pane with no Pokemon in it.
+  check('the pane command is passed through whole', wezArgs.slice(wezArgs.indexOf('--') + 1).join(' ') === 'node window.mjs')
+
+  const [, kitArgs] = launchCommand(kit, 'split', plan)
+
+  check('kitty is asked to split rather than stack', kitArgs.includes('--location=hsplit'))
+  check('and told which kitty to talk to', kitArgs[kitArgs.indexOf('--to') + 1] === 'unix:@k')
+  check('and which window to split beside', kitArgs.includes('--match=id:3'))
+
+  // `--match=id:` with nothing after it is not "match anything", it is a
+  // malformed match, and kitty rejects the whole launch. An unset window id has
+  // to mean no --match at all, or it turns a pane beside the wrong window into
+  // no pane whatsoever.
+  const [, kitBare] = launchCommand(kit, 'split', { ...plan, env: { KITTY_LISTEN_ON: 'unix:@k' } })
+
+  check('and never an empty match', kitBare.every((arg) => arg !== '--match=id:') && !kitBare.some((arg) => arg.startsWith('--match')))
+
+  // Ghostty on Linux can start a terminal but cannot split one — that is a
+  // keybind, and pressing it is the macOS path. Saying so here is what lets
+  // openWindow fall back to a window rather than to nothing.
+  check('Ghostty on Linux cannot split', launchCommand(gho, 'split', plan) === null)
+  check('but it can open a window', launchCommand(gho, 'window', plan)?.[0] === 'ghostty')
+
+  // AppleScript is not a command and cannot be described as one. Returning null
+  // is what makes the call site dispatch on `applescript` rather than trying to
+  // spawn a keystroke.
+  check('the AppleScript path has no command line', launchCommand(chooseLauncher('darwin', {}, none, all), 'split', plan) === null)
+
+  // kitty sizes a split as a percentage, where everything else counts cells.
+  check('a strip in a tall window is a small percentage', splitBias(4, 100) === 5)
+  check('and in a short one, a larger one', splitBias(4, 20) === 25)
+
+  // Clamped: kitty rejects a bias outside 5-95, and a four-row strip in a
+  // hundred-row window rounds to 4. A launch that fails outright is worse than
+  // a pane two rows too tall.
+  check('never below what kitty accepts', splitBias(4, 1000) === 5)
+  check('and never above it', splitBias(400, 10) === 95)
+
+  // A hook's stdout is a pipe, not a terminal, so the height has to come from
+  // somewhere else or the kitty split is sized off a guess.
+  check('the terminal height is read from the tty when there is one', terminalRows({}, { isTTY: true, rows: 51 }) === 51)
+  check('and from $LINES when there is not', terminalRows({ LINES: '44' }, { isTTY: false }) === 44)
+  check('and falls back rather than throwing', terminalRows({}, null) === 24)
+
+  // The pane invocation itself, which every launcher is handed.
+  check('a pane names its session', paneArgv({ rows: 4, session: 'abc' }).includes('--session=abc'))
+  check('and its Pokemon when there is one', paneArgv({ rows: 4, session: 'a', species: 'gengar' }).includes('--species=gengar'))
+  check('and the one it is waiting for', paneArgv({ rows: 4, session: 'a', pending: 'flygon' }).includes('--pending=flygon'))
+  check('and says neither when there is neither', paneArgv({ rows: 4, session: 'a' }).filter((arg) => arg.startsWith('--')).length === 1)
+}
+
+// The two kitty settings, and the rule about not overruling a setting someone
+// has already made.
+{
+  const { alreadySet, snippet: kittySnippet } = await import('./kitty.mjs')
+
+  check('a fresh config needs both', JSON.stringify(alreadySet('')) === JSON.stringify({ remote: false, splits: false }))
+
+  check(
+    'ours satisfies both',
+    (() => {
+      const set = alreadySet(kittySnippet())
+
+      return set.remote && set.splits
+    })(),
+  )
+
+  // Matched loosely on purpose. Both settings have forms that are not the
+  // string we would write, and writing a second declaration underneath one
+  // someone has made by hand would silently overrule it — kitty takes the last.
+  check('socket-only counts as remote control', alreadySet('allow_remote_control socket-only').remote)
+  check('and so does password', alreadySet('allow_remote_control password').remote)
+  check('but no is not remote control', alreadySet('allow_remote_control no').remote === false)
+
+  check('splits anywhere in the list counts', alreadySet('enabled_layouts tall,splits,stack').splits)
+  check('and the wildcard counts, since it includes splits', alreadySet('enabled_layouts *').splits)
+  check('a list without splits does not', alreadySet('enabled_layouts tall,stack').splits === false)
+
+  // Indented and commented forms, which is how these actually appear in a
+  // config file someone has been editing.
+  check('leading whitespace is tolerated', alreadySet('   allow_remote_control yes').remote)
+  check('a commented-out setting is not set', alreadySet('# allow_remote_control yes').remote === false)
+}
+
 // The three files that run their work the moment they are loaded.
 //
 // `MODULES` above cannot reach any of them: importing one would perform its job
@@ -1996,6 +2164,14 @@ try {
 const assets = readdirSync(join(ROOT, 'assets')).filter((file) => /\.(gif|png)$/.test(file))
 
 check('assets present', assets.length > 0, `${assets.length} files`)
+
+// --names lists every check that ran, so two runs can be diffed when the total
+// moves. A count that changes between runs is a check that is conditional on
+// something, and finding out which one meant adding this anyway.
+if (process.argv.includes('--names')) {
+  for (const result of results) console.log(result.name)
+  process.exit(0)
+}
 
 const failed = results.filter((result) => !result.ok)
 

@@ -181,7 +181,9 @@ Issues and pull requests welcome, particularly:
 
 - **A sprite that reads better than one in the roster.** Bring the numbers;
   [design.md](design.md) says which ones and what the bar is.
-- **A Linux path.** Everything but the pane-opening is portable Node. It needs a
-  way to open a split that is not AppleScript.
+- **A terminal it cannot open a pane in yet.** `src/launcher.mjs` holds one
+  entry per terminal — how to detect that you are in it, and the command that
+  splits it. Ghostty, WezTerm and kitty are there; iTerm2 and tmux are not, and
+  [roadmap.md](roadmap.md) says what each would take.
 
 `npm test` before you push.

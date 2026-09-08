@@ -297,19 +297,35 @@ try {
         rmSync(owed, { force: true })
       } catch {}
 
-      const { hasGhostty } = await import('../src/bootstrap.mjs')
       const { rcFile } = await import('../src/shell.mjs')
+      const { chooseLauncher } = await import('../src/launcher.mjs')
 
       const { homedir: home } = await import('node:os')
       const rc = rcFile().startsWith(home()) ? `~${rcFile().slice(home().length)}` : rcFile()
 
+      // What is left to do depends on which terminal is going to open the pane.
+      //
+      // This was a fixed list headed by the macOS Accessibility grant, which is
+      // the price of opening a split by pressing the key that splits it — the
+      // Ghostty path and nothing else. Printed to someone in WezTerm on Linux it
+      // named a settings pane they do not have, for a permission they do not
+      // need, as the first of three things they must do before it works.
+      const launcher = chooseLauncher()
+
+      const steps = [
+        ...(launcher?.applescript
+          ? ['Allow Ghostty in Accessibility — System Settings > Privacy &\n     Security. No pane appears at all without it.']
+          : []),
+        `Restart this agent${launcher?.applescript ? ', and Ghostty' : launcher?.name === 'kitty' ? ', and kitty' : ''}.`,
+        `Open a new terminal, or: source ${rc}   (for claude --pikachu)`,
+      ]
+
       process.stderr.write(
-        'pokemanion is installed. Three things left, none of them optional:\n\n' +
-          '  1. Allow Ghostty in Accessibility — System Settings > Privacy &\n' +
-          '     Security. No pane appears at all without it.\n' +
-          '  2. Restart this agent, and Ghostty.\n' +
-          `  3. Open a new terminal, or: source ${rc}   (for claude --pikachu)\n\n` +
-          (hasGhostty() ? '' : 'Ghostty is missing — the pane is a Ghostty split: https://ghostty.org\n\n') +
+        `pokemanion is installed. ${steps.length === 3 ? 'Three' : 'Two'} things left, none of them optional:\n\n` +
+          `${steps.map((step, index) => `  ${index + 1}. ${step}`).join('\n')}\n\n` +
+          (launcher
+            ? ''
+            : 'No terminal here that can open the pane — it needs Ghostty on macOS,\nWezTerm, or kitty with remote control on.\n\n') +
           'Then send that message again. --pokemon lists who ships. Shown once.\n',
       )
       process.exit(2)
@@ -694,10 +710,13 @@ try {
       // So if the two things the sprite cannot work without are missing, this
       // is where to say so. Only when something is actually wrong, and only on
       // a command that was going to answer anyway.
-      const { hasGhostty, chafaFix } = await import('../src/bootstrap.mjs')
+      const { chafaFix } = await import('../src/bootstrap.mjs')
+      const { chooseLauncher } = await import('../src/launcher.mjs')
       const { spawnSync: probe } = await import('node:child_process')
       const missing = [
-        hasGhostty() ? null : 'Ghostty — the pane is a Ghostty split (https://ghostty.org)',
+        chooseLauncher()
+          ? null
+          : 'a terminal the pane can open in — Ghostty on macOS, WezTerm, or kitty with remote control on',
         probe('command', ['-v', 'chafa'], { shell: true }).status === 0 ? null : chafaFix(),
       ].filter(Boolean)
 
@@ -780,13 +799,18 @@ try {
 
       if (!existsSync(done)) {
         try {
-          const { install } = await import('../src/ghostty.mjs')
-          const { bootstrapChafa, hasGhostty } = await import('../src/bootstrap.mjs')
+          const { bootstrapChafa } = await import('../src/bootstrap.mjs')
+          const { chooseLauncher } = await import('../src/launcher.mjs')
 
-          // Only if Ghostty is actually here. Writing a config file for an
-          // application someone does not have is litter, and it would sit in
-          // ~/.config waiting to confuse them later.
-          if (hasGhostty()) install()
+          // Whichever terminal is actually going to open the pane, configured —
+          // and only that one. Writing a config file for an application someone
+          // does not have is litter, and it would sit in ~/.config waiting to
+          // confuse them later. That was already the rule for Ghostty; it is
+          // the same rule, now that there is more than one answer.
+          const launcher = chooseLauncher()
+
+          if (launcher?.name === 'ghostty-macos') (await import('../src/ghostty.mjs')).install()
+          if (launcher?.name === 'kitty') (await import('../src/kitty.mjs')).install()
 
           // The shell wrapper, so a plugin install is the same install as a
           // clone. It is the one thing the plugin used to leave out, which made

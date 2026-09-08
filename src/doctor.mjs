@@ -17,6 +17,8 @@ import { speciesInUse, windowIsRunning } from './companion.mjs'
 import { available, fetchedGuests, knownCount, pickFor } from './roster.mjs'
 import { guestCost } from './prune.mjs'
 import { AGENTS, isInstalled, isStale } from './agents.mjs'
+import { chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
+import { alreadySet as kittyReady } from './kitty.mjs'
 
 const GREEN = '\x1b[32m'
 const RED = '\x1b[31m'
@@ -97,10 +99,71 @@ check('chafa', () => {
   }
 })
 
-check('Ghostty', () => ({
-  ok: existsSync('/Applications/Ghostty.app'),
-  detail: existsSync('/Applications/Ghostty.app') ? 'installed' : 'not installed',
-}))
+// Which terminal is going to open the pane — the question that replaced "is
+// Ghostty installed?" when there started to be more than one answer.
+//
+// It reports the command it would actually run, not just the name. Every time
+// the pane has failed to open, the useful thing to know was what was attempted:
+// a launcher chosen correctly and then invoked with the wrong pane id looks
+// exactly like a launcher not chosen at all, from the outside.
+const launcher = chooseLauncher()
+
+check('pane opener', () => {
+  if (!launcher) {
+    return {
+      ok: false,
+      detail:
+        `no terminal here that can open it${process.env.TERM_PROGRAM ? ` — this is ${process.env.TERM_PROGRAM}` : ''}\n` +
+        '      needs Ghostty on macOS, WezTerm, or kitty with remote control on.\n' +
+        '      or run it yourself: npm run window 4 --session=<id>',
+    }
+  }
+
+  if (launcher.applescript) return { ok: true, detail: `${launcher.label} — the split is a keystroke` }
+
+  const mode = config.windowMode === 'split' ? 'split' : 'window'
+  const command =
+    launchCommand(launcher, mode, {
+      rows: config.windowRows ?? 3,
+      cols: config.windowCols ?? 34,
+      argv: paneArgv({ rows: config.windowRows ?? 3, session: '<id>' }),
+      env: process.env,
+      rowsAvailable: terminalRows(),
+    }) ?? launchCommand(launcher, 'window', { rows: config.windowRows ?? 3, cols: config.windowCols ?? 34, argv: ['…'], env: process.env, rowsAvailable: terminalRows() })
+
+  // Trimmed to the launcher's own arguments. The rest is the pane invocation,
+  // which is the same every time and forty characters of node path.
+  const shown = command ? `${command[0]} ${command[1].slice(0, command[1].indexOf('--')).join(' ')}` : 'cannot open a pane'
+
+  return { ok: Boolean(command), detail: `${launcher.label} — ${shown}` }
+})
+
+// Only where it is the thing that opens the pane. A Ghostty sitting in
+// /Applications on a machine whose pane comes from WezTerm is not a fault, and
+// reporting it as one sends people to install something they do not need.
+if (!launcher || launcher.name === 'ghostty-macos') {
+  check('Ghostty', () => ({
+    ok: existsSync('/Applications/Ghostty.app'),
+    detail: existsSync('/Applications/Ghostty.app') ? 'installed' : 'not installed',
+  }))
+}
+
+// And the kitty equivalent: the pane is chosen to come from kitty, so the two
+// settings it needs are now part of the setup rather than trivia.
+if (launcher?.name === 'kitty') {
+  check('kitty options', () => {
+    const set = kittyReady()
+
+    return {
+      ok: true,
+      warn: !(set.remote && set.splits),
+      detail:
+        set.remote && set.splits
+          ? 'remote control on, splits layout available'
+          : `${set.remote ? '' : 'remote control off. '}${set.splits ? '' : 'splits layout not enabled. '}npm run kitty -- --install`,
+    }
+  })
+}
 
 // One line per agent, whether or not you have it. An agent you do not use
 // reporting "not installed" is information; leaving it out entirely would make
@@ -239,6 +302,15 @@ check('auto-open', () => {
   if (!config.autoWindow) return { ok: true, warn: true, detail: 'off — start it with npm run window' }
 
   if (config.windowMode !== 'split') return { ok: true, detail: 'on, separate window (no permission needed)' }
+
+  // Accessibility is the price of opening a split by pressing the key that
+  // splits it, and that is the macOS Ghostty path alone. WezTerm and kitty are
+  // handed the request over their own socket, which macOS has no opinion about
+  // — so probing for the permission there would report a problem that does not
+  // exist and cannot be fixed.
+  if (launcher && !launcher.applescript) {
+    return { ok: true, detail: `on, split mode via ${launcher.label} (no permission needed)` }
+  }
 
   // The permission belongs to whichever app runs the script, so this can only
   // report what it sees from here.

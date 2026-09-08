@@ -6,9 +6,25 @@ can tell what a session is doing from across the room without reading the screen
 
 17 ship with it, 1241 more can be summoned by name, and there is a Pokédex.
 
-**macOS + Ghostty only.** It draws sprites using the kitty graphics protocol and
-opens the split by driving Ghostty through AppleScript. It needs `chafa`
-(`brew install chafa`) and Ghostty in `/Applications`.
+**macOS or Linux, in one of four terminals.** It draws sprites using the kitty
+graphics protocol, so the terminal has to speak it, and it opens the pane by
+asking that terminal — which is a different request in each one. `chafa` is
+required everywhere.
+
+| you are in | the pane opens by | needs |
+| --- | --- | --- |
+| **Ghostty on macOS** — the tested setup | pressing cmd-shift-D through AppleScript | Ghostty in `/Applications`, and Accessibility |
+| **WezTerm**, either platform | `wezterm cli split-pane --cells` | nothing — this is the one that just works |
+| **kitty**, either platform | `kitty @ launch --location=hsplit` | `npm run kitty -- --install`, then restart kitty |
+| **Ghostty on Linux** | `ghostty -e`, as its own window | nothing |
+
+Anywhere else — Terminal.app, Alacritty, GNOME Terminal, Windows — nothing opens
+and `npm run doctor` says so. The pane can still be run by hand in a second
+terminal that speaks the protocol: `npm run window 4 --session=<id>`.
+
+`src/launcher.mjs` is the whole of that decision and it launches nothing, which
+is why the suite can test it against invented machines. Add a terminal by adding
+an entry to `LAUNCHERS`.
 
 ## If the user wants to install it
 
@@ -21,18 +37,20 @@ and the first command swallows the second:
 
     /plugin install pokemanion@pokemanion
 
-It cannot install Ghostty — a GUI app that asks for a password — but it does
+It cannot install a terminal — a GUI app that asks for a password — but it does
 everything else the clone does, including chafa and the `claude --pikachu`
 shell wrapper. Clone it only to work on the code:
 
     git clone https://github.com/khatriadbhut/pokemanion.git
     cd pokemanion
 
-If `chafa` or Ghostty are missing, run **`npm run deps`** first — it installs
-both via Homebrew. Then run **`npm run setup`**, which is the whole install: it
-checks the prerequisites, downloads the sprites, renders them, registers the
-hooks for whichever agents it finds — Claude Code, Codex, or both — adds the
-matching shell wrapper, and sets the Ghostty resize keybind the pane needs.
+If `chafa` or a terminal is missing, run **`npm run deps`** first — on macOS it
+installs both via Homebrew; on Linux it installs chafa through whichever of apt,
+dnf, pacman, zypper or apk is there, and names the terminals rather than picking
+one for you. Then run **`npm run setup`**, which is the whole install: it checks
+the prerequisites, downloads the sprites, renders them, registers the hooks for
+whichever agents it finds — Claude Code, Codex, or both — adds the matching
+shell wrapper, and configures whichever terminal is going to open the pane.
 Safe to run more than once.
 
 Then tell them the things the script cannot do for them:
@@ -41,11 +59,16 @@ Then tell them the things the script cannot do for them:
    it. A plugin does not need that: `/reload-plugins` loads them into the session
    you are already in. Either way the pane opens with the next session, or right
    now if they type `--pikachu`.
-2. **Restart Ghostty** — it reads its config at startup.
+2. **Restart the terminal** — Ghostty and kitty both read their config at
+   startup, and setup has just written to it. Nothing to restart in WezTerm,
+   which needs no configuration.
 3. **Open a new terminal**, or `source ~/.zshrc`.
 4. **System Settings → Privacy & Security → Accessibility → enable Ghostty.**
    Opening a split means pressing keys, and macOS blocks that until allowed.
-   Without it no pane appears at all.
+   Without it no pane appears at all. **Ghostty on macOS only** — every other
+   terminal is handed the request over its own socket, which macOS has no
+   opinion about, and telling a Linux user to open System Settings is the most
+   confusing thing this project can say.
 5. **Trust the hooks when Codex asks**, and run `/hooks` inside Codex after any
    update to this project. It hashes each hook and skips the ones it has not
    reviewed, silently, so the sprite just stops reacting.

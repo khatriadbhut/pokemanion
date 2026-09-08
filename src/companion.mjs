@@ -17,6 +17,7 @@ import { existsSync as fileExists, readdirSync } from 'node:fs'
 import { ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { isFetched, pickFor, requestedName, requestedSpecies } from './roster.mjs'
 import { rememberSpecies, rememberedSpecies } from './assigned.mjs'
+import { chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
 
 // One sprite per session, so the pid is recorded per session too. A window
 // belonging to one Claude must not be closed when a different one exits.
@@ -806,33 +807,124 @@ export const openWindow = (id, source = null, forced = null) => {
 
   logChoice(id, species, reason.why)
 
-  if (config.windowMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species, pending)
+  const wantedMode = config.windowMode === 'split' ? 'split' : 'window'
+  const launcher = chooseLauncher()
 
-  const args = [
-    '-na',
-    'Ghostty.app',
-    '--args',
-    // A window just tall enough for the sprite, and narrow. Ghostty sizes in
-    // cells, which is what the sprite is measured in too.
-    `--window-height=${rows + 1}`,
-    `--window-width=${config.windowCols ?? 34}`,
-    '--window-title=pikachu',
-    '--window-decoration=false',
-    '-e',
-    process.execPath,
-    join(ROOT, 'src', 'window.mjs'),
-    String(rows),
-    `--session=${safe(id)}`,
-    ...(species ? [`--species=${species}`] : []),
-    ...(pending ? [`--pending=${pending}`] : []),
-  ]
+  // No terminal here this knows how to drive: a Mac without Ghostty, a Linux in
+  // GNOME Terminal, a session inside something with no command line at all.
+  //
+  // This is the same nothing that happened before there were launchers, and it
+  // is deliberately still nothing — opening a terminal the user did not choose,
+  // to put a Pokemon in, is worse than no Pokemon. What is new is that it says
+  // which question it failed, in the log and on stderr, rather than leaving a
+  // session that simply never grows a pane with nothing to explain it.
+  if (!launcher) {
+    console.error(
+      'pokemanion: no terminal here that the pane can be opened in.\n' +
+        '  it needs Ghostty, or WezTerm, or a kitty with remote control on — npm run doctor says which you have.',
+    )
+    logSplit(id, { step: 'no launcher', platform: process.platform, term: process.env.TERM_PROGRAM ?? null })
 
-  // Detached and with its streams released, so the hook can exit immediately
-  // and the window is not tied to the lifetime of a hook that lives for
-  // milliseconds.
-  const child = spawn('open', args, { detached: true, stdio: 'ignore' })
+    return false
+  }
 
-  child.unref()
+  // The macOS Ghostty path, exactly as it was. Split mode is a keystroke and a
+  // wait for a login shell; window mode is `open -na`, because the Ghostty
+  // binary refuses to start a terminal from the command line on macOS and says
+  // so in its own --help.
+  if (launcher.applescript) {
+    if (wantedMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species, pending)
+
+    const args = [
+      '-na',
+      'Ghostty.app',
+      '--args',
+      // A window just tall enough for the sprite, and narrow. Ghostty sizes in
+      // cells, which is what the sprite is measured in too.
+      `--window-height=${rows + 1}`,
+      `--window-width=${config.windowCols ?? 34}`,
+      '--window-title=pikachu',
+      '--window-decoration=false',
+      '-e',
+      ...paneArgv({ rows, session: safe(id), species, pending }),
+    ]
+
+    // Detached and with its streams released, so the hook can exit immediately
+    // and the window is not tied to the lifetime of a hook that lives for
+    // milliseconds.
+    const child = spawn('open', args, { detached: true, stdio: 'ignore' })
+
+    child.unref()
+
+    return true
+  }
+
+  const plan = {
+    rows,
+    cols: config.windowCols ?? 34,
+    argv: paneArgv({ rows, session: safe(id), species, pending }),
+    env: process.env,
+    rowsAvailable: terminalRows(),
+  }
+
+  // A launcher that cannot split falls back to its own window rather than to
+  // nothing. Ghostty on Linux is the case: it can start a terminal running a
+  // command, but splitting one is a keybind and there is no command for it. A
+  // strip window is what `windowMode: "window"` has always been, so this is
+  // giving someone the other supported layout, not a degraded one — and saying
+  // so, because a setting that quietly does something else is worse than either.
+  let command = launchCommand(launcher, wantedMode, plan)
+
+  if (!command && wantedMode === 'split') {
+    command = launchCommand(launcher, 'window', plan)
+
+    if (command) logSplit(id, { step: 'split unsupported, opening a window', launcher: launcher.name })
+  }
+
+  if (!command) {
+    console.error(`pokemanion: ${launcher.label} cannot open the pane`)
+    logSplit(id, { step: 'launcher cannot open', launcher: launcher.name, mode: wantedMode })
+
+    return false
+  }
+
+  const [program, args] = command
+
+  // Synchronous, unlike the `open` above, and that is the point of these
+  // launchers rather than an accident: each one is a client that hands the
+  // request to a terminal already running and exits, in a few milliseconds. So
+  // the status is available, and it is the difference between knowing the pane
+  // opened and assuming it. The AppleScript path had to reconstruct that from
+  // whether a login shell appeared.
+  //
+  // Nothing here is a long-running child — the pane belongs to the terminal, not
+  // to this process — so there is no lifetime to detach from.
+  const result = spawnSync(program, args, { encoding: 'utf8', timeout: 5000 })
+
+  const failed = result.status !== 0
+
+  logSplit(id, {
+    step: failed ? 'launcher failed' : 'launched',
+    launcher: launcher.name,
+    mode: wantedMode,
+    error: failed ? `${result.stderr ?? ''}${result.error ? ` ${result.error}` : ''}`.trim().slice(0, 200) : null,
+  })
+
+  if (failed) {
+    const message = `${result.stderr ?? ''}`.trim()
+
+    // The one failure worth translating. kitty answers a remote control request
+    // it has not been configured to accept with a message about a socket, which
+    // reads as a bug in this rather than a line missing from kitty.conf.
+    console.error(
+      /allow_remote_control|listen_on|not allowed/i.test(message)
+        ? 'pokemanion: kitty has not been told to accept remote control.\n' +
+            '  run: npm run kitty -- --install, then restart kitty.'
+        : `pokemanion: ${launcher.label} could not open the pane — ${message || `exit ${result.status}`}`,
+    )
+
+    return false
+  }
 
   return true
 }

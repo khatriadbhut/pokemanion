@@ -13,7 +13,7 @@ is happening.
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](package.json)
 [![Agents](https://img.shields.io/badge/works%20with-Claude%20Code%20%2B%20Codex-8957e5.svg)](#quick-install)
-[![Platform](https://img.shields.io/badge/tested%20on-macOS%20%2B%20Ghostty-lightgrey.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/macOS%20%2B%20Linux-Ghostty%20%C2%B7%20WezTerm%20%C2%B7%20kitty-lightgrey.svg)](#requirements)
 
 </div>
 
@@ -65,8 +65,9 @@ the machine.
 
 ## Quick install
 
-**Get [Ghostty](https://ghostty.org/download) first** if you do not have it. The
-pane is a Ghostty split. The other requirement, chafa, is fetched for you.
+**You need a terminal that can draw the sprite** — [Ghostty](https://ghostty.org/download),
+[WezTerm](https://wezterm.org/installation) or [kitty](https://sw.kovidgoyal.net/kitty/binary/).
+Get one first if you have none. The other requirement, chafa, is fetched for you.
 
 Then, at your agent:
 
@@ -125,9 +126,13 @@ appears. In Codex, restart it.
 Two more, and neither is optional:
 
 - **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
-  Accessibility. Skip it and everything installs perfectly and no pane ever
+  Accessibility. **macOS + Ghostty only**: opening a split there means pressing
+  the key that splits it, and macOS blocks that until allowed. WezTerm and kitty
+  are asked over their own socket and need no permission.
+  Skip it and everything installs perfectly and no pane ever
   appears.
-- **Restart Ghostty**, which reads its configuration at startup, and **open a
+- **Restart your terminal** if it is Ghostty or kitty, which read their
+  configuration at startup and have just had a line written to it. And **open a
   new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
 
 In Claude Code, install it in the menu rather than by typing the command, if you
@@ -188,14 +193,23 @@ The sprite is a real image, not text.
 
 | | draws the sprite | opens the pane | `claude --pikachu` |
 | --- | :---: | :---: | :---: |
-| **macOS + Ghostty** — the only tested setup | yes | yes | yes |
-| macOS + kitty, iTerm2, WezTerm, Warp | yes | no | yes |
-| Linux + kitty, Konsole | should | no | untested |
+| **macOS + Ghostty** — the setup everything is tested against | yes | yes, a split | yes |
+| **WezTerm**, macOS or Linux | yes | yes, a split | yes |
+| **kitty**, macOS or Linux | yes | yes, a split¹ | yes |
+| **Ghostty on Linux** | yes | yes, its own window² | yes |
+| iTerm2, Warp, Konsole | yes | no | yes |
 | Alacritty, Terminal.app, Windows | no | no | no |
 
-Only the pane-opening is macOS-specific. It splits Ghostty using AppleScript.
-Where the table says *no*, run the pane yourself in a second terminal with
-`npm run window 4 --session=<id>`.
+¹ after `npm run kitty -- --install`, which sets the two things kitty needs:
+remote control, and the splits layout. Then restart kitty.
+
+² Ghostty has no command to split an existing window — that is a keybind, and
+pressing it is what the macOS path does. On Linux the pane is the strip window
+instead, which is the same thing `windowMode: "window"` has always been.
+
+Where the table says *no*, run the pane yourself in a second terminal:
+`npm run window 4 --session=<id>`. `npm run doctor` names the launcher it would
+use, and the exact command it would run.
 
 ## Commands
 
@@ -368,5 +382,6 @@ anyone, and nothing here is sold.
 ## Contributing
 
 Issues and pull requests welcome, particularly a sprite that reads better than
-one in the roster, or a Linux path. [docs/developer.md](docs/developer.md) is
+one in the roster, or a terminal it cannot open a pane in yet.
+[docs/developer.md](docs/developer.md) is
 where to start.
