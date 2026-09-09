@@ -188,4 +188,18 @@ Issues and pull requests welcome, particularly:
   that could have a split but opens a window, or one that could have pixels but
   gets blocks. [roadmap.md](roadmap.md) has the list.
 
+### Checking it on Linux
+
+There is no Linux machine behind this project, so `test/linux/Dockerfile` is the
+substitute: a Debian with chafa, tmux, xterm, Xvfb and ImageMagick, which is
+enough to run the suite, open a real pane in a real terminal, and **screenshot
+the result** rather than reasoning about it. The header of that file has the
+commands and the four bugs it has already found — three of which could not have
+shown up on macOS at all.
+
+Worth doing for anything that touches `src/launcher.mjs`, `src/graphics.mjs` or
+`src/sprite.mjs`. The screenshot is the point: two of those four bugs rendered
+as a pane full of rectangles, which is indistinguishable from a broken sprite
+until you look at it.
+
 `npm test` before you push.

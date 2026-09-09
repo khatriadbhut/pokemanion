@@ -17,7 +17,7 @@ import { existsSync as fileExists, readdirSync } from 'node:fs'
 import { ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { isFetched, pickFor, requestedName, requestedSpecies } from './roster.mjs'
 import { rememberSpecies, rememberedSpecies } from './assigned.mjs'
-import { chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
+import { becomesTheTerminal, chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
 
 // One sprite per session, so the pid is recorded per session too. A window
 // belonging to one Claude must not be closed when a different one exits.
@@ -890,15 +890,37 @@ export const openWindow = (id, source = null, forced = null) => {
 
   const [program, args] = command
 
-  // Synchronous, unlike the `open` above, and that is the point of these
-  // launchers rather than an accident: each one is a client that hands the
-  // request to a terminal already running and exits, in a few milliseconds. So
-  // the status is available, and it is the difference between knowing the pane
+  // A launcher that *becomes* the terminal is started and let go, exactly like
+  // the `open -na` above and for the same reason: it runs for as long as the
+  // pane does, and this hook has milliseconds to live. Waiting for it would
+  // mean killing it.
+  //
+  // The cost is honest and is the same cost the macOS window path has always
+  // paid — there is no exit status to report, because the only status it will
+  // ever have is "the pane closed". `windowIsRunning` is what answers that
+  // question afterwards.
+  if (becomesTheTerminal(launcher)) {
+    try {
+      const child = spawn(program, args, { detached: true, stdio: 'ignore' })
+
+      child.unref()
+    } catch (error) {
+      console.error(`pokemanion: ${launcher.label} could not open the pane — ${String(error).slice(0, 120)}`)
+      logSplit(id, { step: 'launcher failed to start', launcher: launcher.name, error: String(error).slice(0, 200) })
+
+      return false
+    }
+
+    logSplit(id, { step: 'launched, detached', launcher: launcher.name, mode: wantedMode })
+
+    return true
+  }
+
+  // Everything else is a client: it hands the request to a terminal that is
+  // already running and exits in a few milliseconds. Waiting is therefore both
+  // cheap and worth it — the status is the difference between knowing the pane
   // opened and assuming it. The AppleScript path had to reconstruct that from
   // whether a login shell appeared.
-  //
-  // Nothing here is a long-running child — the pane belongs to the terminal, not
-  // to this process — so there is no lifetime to detach from.
   const result = spawnSync(program, args, { encoding: 'utf8', timeout: 5000 })
 
   const failed = result.status !== 0

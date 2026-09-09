@@ -693,10 +693,23 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
   // bumped, and it is what a fresh clone would have hit all along. Rendering
   // the same sprites once here costs a second and makes the timing mean what it
   // says.
+  // Drawn as kitty, whatever this machine would have chosen.
+  //
+  // What is read back below is `c=`, the column count on a kitty *placement* —
+  // so this test is about the kitty format by construction. On a machine that
+  // picks any of the other three there are no placements to find, both sets
+  // come back empty, and it fails having compared nothing to nothing. That is
+  // what it did the first time it was run on Linux, where there is no terminal
+  // and the format guess is symbols.
+  //
+  // $TERM rather than a flag, because that is how the format is really decided
+  // and it keeps the test on the same path as everything else.
+  const asKitty = { ...process.env, TERM: 'xterm-ghostty', PIXEL_RUNNER_KEEP_PANE: '1' }
+
   const warmPane = spawn(
     process.execPath,
     [join(ROOT, 'src', 'window.mjs'), '4', `--session=${session}-warm`, '--species=pikachu'],
-    { stdio: 'ignore', env: { ...process.env, PIXEL_RUNNER_KEEP_PANE: '1' } },
+    { stdio: 'ignore', env: asKitty },
   )
 
   await pause(2500)
@@ -711,7 +724,7 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
   const pane = spawn(
     process.execPath,
     [join(ROOT, 'src', 'window.mjs'), '4', `--session=${session}`, '--species=pikachu'],
-    { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, PIXEL_RUNNER_KEEP_PANE: '1' } },
+    { stdio: ['ignore', 'pipe', 'ignore'], env: asKitty },
   )
 
   let drawn = ''
@@ -1579,6 +1592,34 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
   // A nonsense override is not an override.
   check('an unknown format is ignored', passthroughFor({ graphicsFormat: 'ascii-art' }, { TMUX: '/tmp/x,1,0' }) === 'none')
 
+  // Which block characters to draw with, and both ways it can go wrong. Neither
+  // was reasoned out — both came from rendering a Pikachu in xterm on Linux and
+  // looking at the screenshot.
+  const { symbolsFor } = await import('./graphics.mjs')
+
+  // The font one, which decides the default. On a Debian with the usual
+  // packages, DejaVu Sans Mono covers half blocks and quadrants and nothing
+  // covers sextants or octants except Unifont Upper, which most systems do not
+  // install. A missing glyph is a row of tofu, which is worse than the coarser
+  // picture it was trying to improve on.
+  check('the default is the set every font has', symbolsFor({}) === 'block')
+
+  // The statusline's key is not the pane's. That one is read by build.mjs for a
+  // job where the font is this machine's own; the pane draws somewhere else.
+  check('the statusline setting does not reach the pane', symbolsFor({ chafaSymbols: 'octant' }) === 'block')
+
+  // The chafa one. Debian stable ships 1.14.5, which does not know `octant` —
+  // it exits 1, and chafa exiting is the renderer exiting, so the pane opened
+  // and died instantly.
+  check('octant is used where chafa knows it', symbolsFor({ paneSymbols: 'octant' }, [1, 18, 2]) === 'octant')
+  check('and steps down where it does not', symbolsFor({ paneSymbols: 'octant' }, [1, 14, 5]) === 'sextant')
+  check('1.16 is where it changed', symbolsFor({ paneSymbols: 'octant' }, [1, 16, 0]) === 'octant')
+  check('an unreadable version steps down too', symbolsFor({ paneSymbols: 'octant' }, null) === 'sextant')
+
+  // Anything named explicitly is honoured — someone who set it has looked at
+  // their own font, and second-guessing that is worse than letting chafa say so.
+  check('an explicit choice is passed through', symbolsFor({ paneSymbols: 'half' }, [1, 14, 5]) === 'half')
+
   // chafa cannot work the colour depth out for itself here: its output is a
   // pipe into the frame cache, so it sees no terminal and falls back to 16,
   // which turns a sprite to mud. Only visible in symbols mode, where the
@@ -1646,6 +1687,19 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
   check('konsole next', picked('konsole', 'gnome-terminal', 'xterm') === 'konsole')
   check('then gnome-terminal', picked('gnome-terminal', 'xterm') === 'gnome-terminal')
   check('and xterm last', picked('xterm') === 'xterm')
+
+  // xterm takes its encoding from the locale, and a machine with no UTF-8
+  // locale runs it in 8-bit mode — where U+2580 arrives as the Latin-1 reading
+  // of its UTF-8 bytes, so the sprite is a grid of accented letters. Seen
+  // exactly that way in a container with LANG unset.
+  //
+  // `-en UTF-8` and not `-u8`: the latter is the flag that looks like it does
+  // this, is documented as obsolete, and was ignored — the mojibake survived it
+  // unchanged, which is why this checks for the one that worked.
+  const xtermArgs = UNIX_TERMINALS.find((entry) => entry.command === 'xterm').args(5, 34, ['n'])
+
+  check('xterm is told the encoding outright', xtermArgs[xtermArgs.indexOf('-en') + 1] === 'UTF-8')
+  check('and not with the flag that is ignored', !xtermArgs.includes('-u8'))
 
   // gnome-terminal deprecated -e and mangles anything passed that way, so the
   // separator is not the same in all six and getting it wrong opens a window
@@ -1898,9 +1952,19 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
       const first = say('an ordinary question')
       const second = say('an ordinary question')
 
+      // Matched on the part of the message that is the same everywhere.
+      //
+      // This looked for the word "Accessibility", which was fine while the
+      // message always named the macOS permission. It does not any more — that
+      // step is printed only for the Ghostty path, because telling a Linux user
+      // to open System Settings is the most confusing thing this can say. The
+      // check then failed on Linux while the behaviour it is actually about,
+      // once and then never, was perfectly correct.
+      const greeting = /pokemanion is installed/
+
       check(
         'the plugin hello blocks one prompt and then never again',
-        first.status === 2 && /Accessibility/.test(first.stderr) && second.status === 0 && !/Accessibility/.test(second.stderr),
+        first.status === 2 && greeting.test(first.stderr) && second.status === 0 && !greeting.test(second.stderr),
         `first exit ${first.status}, second exit ${second.status}`,
       )
 

@@ -34,6 +34,7 @@
 // The probe wins when it runs, and what it learns is written down, so the guess
 // is only ever load-bearing once per terminal.
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { STATE_DIR } from './config.mjs'
@@ -265,6 +266,71 @@ export const detectFormat = async (config = {}, env = process.env, options = {})
   remember(format, env)
 
   return format
+}
+
+// Which chafa this is, because the symbol set depends on it.
+//
+// Asked once and remembered: it is a process launch, and the sprite renderer
+// would otherwise pay it per frame.
+let seenVersion
+
+export const chafaVersion = (ask = () => spawnSync('chafa', ['--version'], { encoding: 'utf8' }).stdout) => {
+  if (seenVersion !== undefined) return seenVersion
+
+  const found = /(\d+)\.(\d+)\.(\d+)/.exec(ask() ?? '')
+
+  seenVersion = found ? [Number(found[1]), Number(found[2]), Number(found[3])] : null
+
+  return seenVersion
+}
+
+// The symbol set to draw blocks with, and the reason this is a function rather
+// than the config key being passed through.
+//
+// Two separate things can make the wrong choice here produce a pane full of
+// rectangles, and both were found by rendering a Pikachu in xterm on Linux and
+// looking at the screenshot.
+//
+//   - **chafa has to know the tag.** `octant` is the finest of them — Unicode 16
+//     octants divide a cell into eight where sextants manage six — and chafa
+//     only learned it in 1.16. Debian's current stable ships 1.14.5, which
+//     answers "Unrecognized symbol tag 'octant'" and exits 1. chafa exiting is
+//     the sprite renderer exiting: the pane opened, died instantly, and the
+//     window closed with it.
+//
+//   - **The font has to have the characters**, and this is the one that decides
+//     the default. Asking fontconfig which fonts cover what, on a Debian with
+//     the usual packages:
+//
+//       U+2580 half blocks, U+2596 quadrants   DejaVu Sans Mono
+//       U+1FB00 sextants, U+1CD00 octants      Unifont Upper, and nothing else
+//
+//     DejaVu Sans Mono is the default monospace font on most Linux desktops.
+//     Unifont Upper is a fallback package that most systems do not install. So
+//     sextants and octants are a coin flip on the exact machines that end up in
+//     symbols mode in the first place — the plain terminals, which tend to have
+//     plain fonts — and a missing glyph is a row of tofu, which is worse than
+//     the coarser picture it was trying to improve on.
+//
+// So the default is `block`: half blocks and quadrants, in Unicode since 1993,
+// present in every monospace font anyone has. Coarser, and it is a Pokemon
+// rather than a row of rectangles.
+//
+// Anything named explicitly is honoured, because someone who set it has looked
+// at their own font. `octant` still steps down to `sextant` on a chafa too old
+// to know it, which is the difference between a coarser sprite and no pane.
+export const symbolsFor = (config = {}, version = chafaVersion()) => {
+  // `paneSymbols` and not `chafaSymbols`: that one is the statusline renderer's,
+  // read by src/build.mjs, and it is set to octant for a job where the font is
+  // the one this machine already draws the prompt in. The pane draws in a
+  // terminal that may be somewhere else entirely.
+  const want = config.paneSymbols ?? 'block'
+
+  if (want !== 'octant') return want
+
+  if (!version) return 'sextant'
+
+  return version[0] > 1 || (version[0] === 1 && version[1] >= 16) ? 'octant' : 'sextant'
 }
 
 // Whether to wrap each frame in a multiplexer's passthrough envelope, which is

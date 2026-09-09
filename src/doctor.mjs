@@ -155,7 +155,14 @@ check('pane opener', () => {
 
   // Trimmed to the launcher's own arguments. The rest is the pane invocation,
   // which is the same every time and forty characters of node path.
-  const shown = command ? `${command[0]} ${command[1].slice(0, command[1].indexOf('--')).join(' ')}` : 'cannot open a pane'
+  //
+  // Cut at where the pane's own argv starts rather than at the first `--`.
+  // Several launchers separate with `--` and several do not, and `indexOf`
+  // answering -1 for the ones that do not means `slice(0, -1)`, which quietly
+  // drops the last argument and keeps the node path it was meant to remove.
+  const paneStarts = command ? command[1].indexOf(process.execPath) : -1
+  const ownArgs = command ? command[1].slice(0, paneStarts === -1 ? command[1].length : paneStarts) : []
+  const shown = command ? `${command[0]} ${ownArgs.join(' ')}`.trim() : 'cannot open a pane'
 
   return { ok: Boolean(command), detail: `${launcher.label} — ${shown}` }
 })

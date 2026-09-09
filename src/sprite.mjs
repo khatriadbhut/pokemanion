@@ -18,7 +18,7 @@ import { prepare } from './prepare.mjs'
 import { encodePng } from './pngwrite.mjs'
 import { CACHE_VERSION, ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { sharedBounds } from './render.mjs'
-import { coloursFor, currentFormat, passthroughFor } from './graphics.mjs'
+import { coloursFor, currentFormat, passthroughFor, symbolsFor } from './graphics.mjs'
 
 const config = loadConfig()
 
@@ -85,6 +85,7 @@ const drawnAs = () => ({
   format: currentFormat(config),
   passthrough: passthroughFor(config),
   colours: coloursFor(),
+  symbols: symbolsFor(config),
 })
 
 const cacheKeyFor = (path, cellRows, sheetFrames, flip, range) => {
@@ -111,6 +112,7 @@ const cacheKeyFor = (path, cellRows, sheetFrames, flip, range) => {
         how.format,
         how.passthrough,
         how.colours,
+        how.symbols,
       ].join('|'),
     )
     .digest('hex')
@@ -230,7 +232,7 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
         // colour. chafa normally works this out from the terminal it writes to
         // and cannot: its output is a pipe into the cache, so it sees no
         // terminal and falls back to 16 colours, which turns a sprite to mud.
-        ...(how.format === 'symbols' ? ['--colors', how.colours, '--symbols', config.chafaSymbols ?? 'octant'] : []),
+        ...(how.format === 'symbols' ? ['--colors', how.colours, '--symbols', how.symbols] : []),
         // A multiplexer swallows a graphics sequence unless it is wrapped in
         // the multiplexer's own envelope. chafa's `auto` cannot see one either,
         // for the same reason: it is looking at a pipe.

@@ -332,6 +332,10 @@ export const LAUNCHERS = [
     detect: (platform, env, exists = have) =>
       platform !== 'darwin' && (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') && exists('ghostty'),
 
+    // This command does not return: it *is* the terminal, and it runs for as
+    // long as the pane does. See `becomesTheTerminal` below.
+    becomesTheTerminal: true,
+
     // Window only. Ghostty has no command to split an existing window on any
     // platform — that is a keybind, and pressing it is what the macOS path does
     // and what needs an accessibility grant. A Linux Ghostty user gets the
@@ -396,6 +400,8 @@ export const LAUNCHERS = [
     // all. Before this file existed, every one of them opened nothing.
     detect: (platform, env, exists = have) => platform !== 'darwin' && UNIX_TERMINALS.some((entry) => exists(entry.command)),
 
+    becomesTheTerminal: true,
+
     // `exists` off the plan rather than the module-level `have`, so the suite
     // can ask which of six terminals this would pick on a machine that has
     // three of them — the question the ordering exists to answer, and one this
@@ -425,8 +431,40 @@ export const UNIX_TERMINALS = [
   { command: 'gnome-terminal', args: (rows, cols, argv) => [`--geometry=${cols}x${rows}`, '--', ...argv] },
   { command: 'xfce4-terminal', args: (rows, cols, argv) => [`--geometry=${cols}x${rows}`, '--hide-menubar', '-x', ...argv] },
   { command: 'alacritty', args: (rows, cols, argv) => ['-o', `window.dimensions.columns=${cols}`, '-o', `window.dimensions.lines=${rows}`, '-e', ...argv] },
-  { command: 'xterm', args: (rows, cols, argv) => ['-geometry', `${cols}x${rows}`, '-e', ...argv] },
+  // `-en UTF-8`, because xterm otherwise takes its encoding from the locale, and
+  // a machine with no UTF-8 locale runs it in 8-bit mode — where every block
+  // character arrives as the Latin-1 reading of its UTF-8 bytes. U+2580 becomes
+  // "â–€", so the sprite is a grid of accented letters. Seen exactly that way in
+  // a container with LANG unset.
+  //
+  // Not `-u8`, which is the flag that looks like it does this and was tried
+  // first. It is documented as obsolete and modern xterm ignores it in favour
+  // of the locale, so the mojibake survived it unchanged. `-en` sets the
+  // encoding outright and is the one that turned the grid back into a Pikachu.
+  //
+  // xterm alone needs this. The other five are UTF-8 whatever the locale says.
+  { command: 'xterm', args: (rows, cols, argv) => ['-en', 'UTF-8', '-geometry', `${cols}x${rows}`, '-e', ...argv] },
 ]
+
+// Whether a launcher's command returns once the pane is open, or runs for as
+// long as the pane does.
+//
+// Most of them are clients: `wezterm cli`, `kitty @`, `tmux` and `osascript`
+// all hand a request to something already running and exit in milliseconds, so
+// their exit status is the answer to "did the pane open".
+//
+// `xterm -e node …` is not a client. It *is* the terminal — it runs until the
+// pane does, and waiting for it means waiting forever. That was not a
+// theoretical difference: the first Linux run spawned it with a five second
+// timeout, which is the ceiling for a request that should take milliseconds and
+// a death sentence for a process that is supposed to live for the session. The
+// pane appeared and was killed five seconds later, every time. Nothing on macOS
+// could have caught it, because every launcher there is a client.
+//
+// Marked on the launcher rather than guessed at the call site, so adding a
+// terminal means answering the question rather than inheriting the wrong half
+// of it.
+export const becomesTheTerminal = (launcher) => Boolean(launcher?.becomesTheTerminal)
 
 // The first launcher that fits, or null.
 //
