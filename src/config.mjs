@@ -35,7 +35,7 @@ export const STATE_DIR = join(ROOT, '.state')
 // delete them: two bumps left 42MB and then 36MB of unreachable frames lying
 // around. Every entry records the version it was written under so the pruner
 // can sweep the ones that no longer match.
-export const CACHE_VERSION = 4
+export const CACHE_VERSION = 5
 export const STATE_FILE = join(STATE_DIR, 'activity.json')
 
 export const DEFAULTS = {

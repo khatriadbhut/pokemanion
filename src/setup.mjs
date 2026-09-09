@@ -61,7 +61,7 @@ const launcher = chooseLauncher()
 if (!launcher) {
   warnings.push([
     `no terminal here that the pane can be opened in${process.env.TERM_PROGRAM ? ` — this is ${process.env.TERM_PROGRAM}` : ''}`,
-    'it needs Ghostty on macOS, or WezTerm, or kitty with remote control on. everything else here still installs',
+    'run the pane by hand instead: npm run window 4 --session=<id>. everything else here still installs',
   ])
 }
 

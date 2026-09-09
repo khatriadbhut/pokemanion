@@ -27,6 +27,7 @@
   "autoFit": false,
   "windowRows": 4,
   "windowCols": 34,
+  "graphicsFormat": null,
   "statusSprite": false,
   "frameMs": 333,
   "maxFrames": 4,

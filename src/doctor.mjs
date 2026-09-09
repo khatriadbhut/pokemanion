@@ -19,6 +19,7 @@ import { guestCost } from './prune.mjs'
 import { AGENTS, isInstalled, isStale } from './agents.mjs'
 import { chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
 import { alreadySet as kittyReady } from './kitty.mjs'
+import { currentFormat, remembered } from './graphics.mjs'
 
 const GREEN = '\x1b[32m'
 const RED = '\x1b[31m'
@@ -90,6 +91,27 @@ for (const [label, name] of [
   })
 }
 
+// How the sprite is drawn here, which is the other half of "does this work in
+// my terminal" and used to have no answer at all.
+check('sprite format', () => {
+  const format = currentFormat(config)
+  const probed = remembered() !== null
+
+  const why = config.graphicsFormat
+    ? 'forced in config.json'
+    : probed
+      ? 'the terminal was asked'
+      : `guessed from ${process.env.TERM_PROGRAM ? '$TERM_PROGRAM' : '$TERM'} — a pane will ask and may pick better`
+
+  return {
+    ok: true,
+    // Not a warning. Symbols is a real answer and the whole point of having
+    // four: it is what a terminal with no pixel support draws instead of
+    // nothing. Flagging it would be reporting a working setup as a problem.
+    detail: `${format}${format === 'symbols' ? ' — coloured blocks, no pixel support here' : ''} (${why})`,
+  }
+})
+
 check('chafa', () => {
   const probe = spawnSync('chafa', ['--version'], { encoding: 'utf8' })
 
@@ -113,9 +135,9 @@ check('pane opener', () => {
     return {
       ok: false,
       detail:
-        `no terminal here that can open it${process.env.TERM_PROGRAM ? ` — this is ${process.env.TERM_PROGRAM}` : ''}\n` +
-        '      needs Ghostty on macOS, WezTerm, or kitty with remote control on.\n' +
-        '      or run it yourself: npm run window 4 --session=<id>',
+        `nothing here can open a window${process.env.TERM_PROGRAM ? ` — this is ${process.env.TERM_PROGRAM}` : ''}\n` +
+        '      the sprite would still draw; there is just nothing to put it in.\n' +
+        '      run it yourself: npm run window 4 --session=<id>',
     }
   }
 

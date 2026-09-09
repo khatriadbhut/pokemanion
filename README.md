@@ -13,7 +13,7 @@ is happening.
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](package.json)
 [![Agents](https://img.shields.io/badge/works%20with-Claude%20Code%20%2B%20Codex-8957e5.svg)](#quick-install)
-[![Platform](https://img.shields.io/badge/macOS%20%2B%20Linux-Ghostty%20%C2%B7%20WezTerm%20%C2%B7%20kitty-lightgrey.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/macOS%20%2B%20Linux-any%20terminal-lightgrey.svg)](#requirements)
 
 </div>
 
@@ -65,9 +65,11 @@ the machine.
 
 ## Quick install
 
-**You need a terminal that can draw the sprite** — [Ghostty](https://ghostty.org/download),
-[WezTerm](https://wezterm.org/installation) or [kitty](https://sw.kovidgoyal.net/kitty/binary/).
-Get one first if you have none. The other requirement, chafa, is fetched for you.
+**Your terminal will do.** The sprite is drawn as pixels where the terminal
+supports them and as coloured blocks where it does not, so there is nothing to
+install first — though [Ghostty](https://ghostty.org/download),
+[WezTerm](https://wezterm.org/installation) and [kitty](https://sw.kovidgoyal.net/kitty/binary/)
+give the best-looking result. chafa, the one real requirement, is fetched for you.
 
 Then, at your agent:
 
@@ -127,8 +129,9 @@ Two more, and neither is optional:
 
 - **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
   Accessibility. **macOS + Ghostty only**: opening a split there means pressing
-  the key that splits it, and macOS blocks that until allowed. WezTerm and kitty
-  are asked over their own socket and need no permission.
+  the key that splits it, and macOS blocks that until allowed. Every other
+  terminal is asked over its own socket or scripting interface, and tmux,
+  WezTerm and the rest need no permission at all.
   Skip it and everything installs perfectly and no pane ever
   appears.
 - **Restart your terminal** if it is Ghostty or kitty, which read their
@@ -187,29 +190,36 @@ at the switch; seven were given animations of their own.
 
 ## Requirements
 
-**Node ≥ 20** (no dependencies), **chafa**, and a terminal that speaks the
-[kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
-The sprite is a real image, not text.
+**Node ≥ 20** (no dependencies) and **chafa**. That is the whole list: there is
+no longer a terminal requirement, because the sprite is drawn in whatever the
+terminal can do.
 
-| | draws the sprite | opens the pane | `claude --pikachu` |
-| --- | :---: | :---: | :---: |
-| **macOS + Ghostty** — the setup everything is tested against | yes | yes, a split | yes |
-| **WezTerm**, macOS or Linux | yes | yes, a split | yes |
-| **kitty**, macOS or Linux | yes | yes, a split¹ | yes |
-| **Ghostty on Linux** | yes | yes, its own window² | yes |
-| iTerm2, Warp, Konsole | yes | no | yes |
-| Alacritty, Terminal.app, Windows | no | no | no |
+| you are in | the pane is | the sprite is drawn as |
+| --- | --- | :---: |
+| **Ghostty on macOS** — the setup everything is tested against | a split | pixels |
+| **tmux**, in any terminal | a split | pixels¹ |
+| **WezTerm** · **kitty**² · **iTerm2** | a split | pixels |
+| **Ghostty on Linux** · **Terminal.app** | its own strip window | pixels · blocks |
+| foot · konsole · gnome-terminal · xfce4-terminal · alacritty · xterm | its own strip window | pixels or blocks |
+| anything else, over ssh, in a terminal nobody has heard of | run it yourself³ | blocks |
 
-¹ after `npm run kitty -- --install`, which sets the two things kitty needs:
-remote control, and the splits layout. Then restart kitty.
+The pane asks your terminal what it can do — the kitty graphics protocol, sixel,
+or neither — and picks the best of chafa's four output formats. **Neither is a
+real answer**: that is the `symbols` format, octants in truecolor, and it is
+what Terminal.app and Alacritty draw instead of the nothing they drew before.
 
-² Ghostty has no command to split an existing window — that is a keybind, and
-pressing it is what the macOS path does. On Linux the pane is the strip window
-instead, which is the same thing `windowMode: "window"` has always been.
+`npm run graphics`, run *in* the terminal you are asking about, says what yours
+answered and what it will get. `npm run doctor` names the launcher it would use
+and the command it would run.
 
-Where the table says *no*, run the pane yourself in a second terminal:
-`npm run window 4 --session=<id>`. `npm run doctor` names the launcher it would
-use, and the exact command it would run.
+¹ tmux 3.4 and later render sixels themselves. Older ones get blocks, which is
+still a Pokémon.
+
+² kitty needs `npm run kitty -- --install` — remote control and the splits
+layout — then a restart. iTerm2 asks for Automation permission once.
+
+³ `npm run window 4 --session=<id>` in a second terminal. Nothing can open a
+window for you there; everything else works.
 
 ## Commands
 

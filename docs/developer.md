@@ -181,9 +181,11 @@ Issues and pull requests welcome, particularly:
 
 - **A sprite that reads better than one in the roster.** Bring the numbers;
   [design.md](design.md) says which ones and what the bar is.
-- **A terminal it cannot open a pane in yet.** `src/launcher.mjs` holds one
-  entry per terminal — how to detect that you are in it, and the command that
-  splits it. Ghostty, WezTerm and kitty are there; iTerm2 and tmux are not, and
-  [roadmap.md](roadmap.md) says what each would take.
+- **A terminal that gets a worse pane than it could.** `src/launcher.mjs` holds
+  one entry per terminal — how to detect that you are in it, and the command
+  that opens a pane — and `src/graphics.mjs` picks how the sprite is drawn in
+  it. Everything gets something now, so the open work is upgrades: a terminal
+  that could have a split but opens a window, or one that could have pixels but
+  gets blocks. [roadmap.md](roadmap.md) has the list.
 
 `npm test` before you push.

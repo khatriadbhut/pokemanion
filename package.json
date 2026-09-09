@@ -1,6 +1,6 @@
 {
   "name": "pokemanion",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -15,6 +15,7 @@
     "deps": "node src/deps.mjs",
     "ghostty": "node src/ghostty.mjs",
     "kitty": "node src/kitty.mjs",
+    "graphics": "node src/graphics.mjs",
     "install-statusline": "node install.mjs",
     "uninstall-statusline": "node install.mjs --uninstall",
     "compare": "node src/compare.mjs",

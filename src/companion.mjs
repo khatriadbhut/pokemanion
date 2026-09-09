@@ -820,8 +820,8 @@ export const openWindow = (id, source = null, forced = null) => {
   // session that simply never grows a pane with nothing to explain it.
   if (!launcher) {
     console.error(
-      'pokemanion: no terminal here that the pane can be opened in.\n' +
-        '  it needs Ghostty, or WezTerm, or a kitty with remote control on — npm run doctor says which you have.',
+      'pokemanion: nothing here can open a window for the pane.\n' +
+        '  run it yourself in a second terminal: npm run window 4 --session=<id>',
     )
     logSplit(id, { step: 'no launcher', platform: process.platform, term: process.env.TERM_PROGRAM ?? null })
 

@@ -6,25 +6,47 @@ can tell what a session is doing from across the room without reading the screen
 
 17 ship with it, 1241 more can be summoned by name, and there is a Pokédex.
 
-**macOS or Linux, in one of four terminals.** It draws sprites using the kitty
-graphics protocol, so the terminal has to speak it, and it opens the pane by
-asking that terminal — which is a different request in each one. `chafa` is
-required everywhere.
+**macOS and Linux, in any terminal.** Two questions, and both now have an
+answer everywhere: how the pane is opened, and how the sprite is drawn in it.
+`chafa` is required for the second one; there is no other dependency.
 
-| you are in | the pane opens by | needs |
+**Opening it** — `src/launcher.mjs`, tried in this order, first match wins:
+
+| you are in | the pane is | needs |
 | --- | --- | --- |
-| **Ghostty on macOS** — the tested setup | pressing cmd-shift-D through AppleScript | Ghostty in `/Applications`, and Accessibility |
-| **WezTerm**, either platform | `wezterm cli split-pane --cells` | nothing — this is the one that just works |
-| **kitty**, either platform | `kitty @ launch --location=hsplit` | `npm run kitty -- --install`, then restart kitty |
-| **Ghostty on Linux** | `ghostty -e`, as its own window | nothing |
+| **tmux** | a split, in any terminal | nothing |
+| **WezTerm** | a split | nothing |
+| **kitty** | a split | `npm run kitty -- --install`, then restart kitty |
+| **iTerm2** | a split | Automation permission, asked once |
+| **Ghostty on macOS** — the tested setup | a split | Ghostty in `/Applications`, and Accessibility |
+| **Ghostty on Linux** | its own strip window | nothing |
+| **Terminal.app** | its own strip window | nothing |
+| foot, konsole, gnome-terminal, xfce4-terminal, alacritty, xterm | its own strip window | nothing |
 
-Anywhere else — Terminal.app, Alacritty, GNOME Terminal, Windows — nothing opens
-and `npm run doctor` says so. The pane can still be run by hand in a second
-terminal that speaks the protocol: `npm run window 4 --session=<id>`.
+Each is detected on a variable its own terminal sets — `$TMUX`, `$WEZTERM_PANE`,
+`$KITTY_LISTEN_ON`, `$TERM_PROGRAM`, `$TERM`. Never on a variable that is merely
+exported, which is a bug this already had: `$GHOSTTY_RESOURCES_DIR` is inherited
+by every shell started from a Ghostty and was still set inside a Terminal.app.
 
-`src/launcher.mjs` is the whole of that decision and it launches nothing, which
-is why the suite can test it against invented machines. Add a terminal by adding
-an entry to `LAUNCHERS`.
+**Drawing it** — `src/graphics.mjs`. chafa has four output formats and the pane
+asks the terminal which it wants, by sending the kitty graphics query and a
+Primary Device Attributes request together and reading the reply:
+
+| format | who gets it | note |
+| --- | --- | --- |
+| `kitty` | Ghostty, kitty, WezTerm, iTerm2 3.5+ | a frame is sent once and then referred to by id — 0.02MB against 35.9MB for four hundred draws |
+| `sixels` | tmux 3.4+, foot, Konsole, xterm with sixel | one image per frame |
+| `iterm` | older iTerm2 | one image per frame |
+| `symbols` | **everything else** | octants in truecolor, not pixels. What Terminal.app, Alacritty and GNOME Terminal draw instead of nothing |
+
+The probe needs a tty, so the pane does it and writes the answer down; `npm run
+warm` and `npm run doctor` read that rather than asking again. With no tty and
+nothing written down it guesses from `$TERM`. `npm run graphics` asks and says
+what came back — run it *in* the terminal you are asking about. Override it all
+with `graphicsFormat` in `config.json`.
+
+Anything that changes those bytes is in the sprite cache key, so the four
+formats cannot be handed each other's frames.
 
 ## If the user wants to install it
 

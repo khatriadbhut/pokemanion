@@ -325,7 +325,7 @@ try {
           `${steps.map((step, index) => `  ${index + 1}. ${step}`).join('\n')}\n\n` +
           (launcher
             ? ''
-            : 'No terminal here that can open the pane — it needs Ghostty on macOS,\nWezTerm, or kitty with remote control on.\n\n') +
+            : 'Nothing here can open a window for the pane. Run it yourself in a\nsecond terminal: npm run window 4 --session=<id>\n\n') +
           'Then send that message again. --pokemon lists who ships. Shown once.\n',
       )
       process.exit(2)
@@ -716,7 +716,7 @@ try {
       const missing = [
         chooseLauncher()
           ? null
-          : 'a terminal the pane can open in — Ghostty on macOS, WezTerm, or kitty with remote control on',
+          : 'something that can open a window — or run the pane by hand: npm run window 4 --session=<id>',
         probe('command', ['-v', 'chafa'], { shell: true }).status === 0 ? null : chafaFix(),
       ].filter(Boolean)
 
