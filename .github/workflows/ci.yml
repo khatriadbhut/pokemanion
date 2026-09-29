@@ -25,7 +25,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # No dependencies, so there is nothing to install.
+      # No npm dependencies. chafa is the one real requirement, and the suite
+      # drives a real pane: without it the pane cannot draw a frame, and the
+      # test that reads back what it drew fails having seen nothing at all.
+      # That is what kept this red from v1.7.0 to v1.9.1.
+      - name: chafa
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq chafa
 
       - name: Syntax
         run: for f in src/*.mjs bin/*.mjs install.mjs; do node --check "$f"; done
