@@ -18,6 +18,7 @@ import { prepare } from './prepare.mjs'
 import { encodePng } from './pngwrite.mjs'
 import { CACHE_VERSION, ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { sharedBounds } from './render.mjs'
+import { coloursFor, currentFormat, passthroughFor, symbolsFor } from './graphics.mjs'
 
 const config = loadConfig()
 
@@ -75,8 +76,21 @@ const magnify = (pixels, width, height, factor) => {
 // on screen or the settings that shape it change, so it is worth keeping.
 const CACHE_DIR = join(STATE_DIR, 'cache')
 
+// How this terminal is being drawn in, and everything that changes those bytes.
+//
+// Read at call time rather than at import, because the pane asks the terminal
+// what it supports and writes the answer down *before* it loads a sprite —
+// a module-level constant here would be the guess made a moment too early.
+const drawnAs = () => ({
+  format: currentFormat(config),
+  passthrough: passthroughFor(config),
+  colours: coloursFor(),
+  symbols: symbolsFor(config),
+})
+
 const cacheKeyFor = (path, cellRows, sheetFrames, flip, range) => {
   const stat = statSync(path)
+  const how = drawnAs()
 
   return createHash('sha1')
     .update(
@@ -90,6 +104,15 @@ const cacheKeyFor = (path, cellRows, sheetFrames, flip, range) => {
         JSON.stringify(sheetFrames ?? null),
         flip ? 'flip' : '',
         JSON.stringify(range ?? null),
+        // A cache entry is escape sequences, not pixels, so anything that
+        // changes which escape sequences chafa emits has to be in the key. It
+        // was not, and it did not need to be while there was exactly one
+        // format — the day there were four, a sixel terminal would have been
+        // handed the kitty frames some other terminal warmed.
+        how.format,
+        how.passthrough,
+        how.colours,
+        how.symbols,
       ].join('|'),
     )
     .digest('hex')
@@ -138,7 +161,12 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
   // A window of frames, for an animation that is longer than the moment it is
   // wanted for. `sliceSheet` cannot do this — it only takes apart a single
   // image laid out as a grid, and returns a real GIF untouched.
-  const image = range ? { ...whole, frames: whole.frames.slice(range[0], range[1]) } : whole
+  //
+  // Either one window, `[from, to]`, or several played back to back,
+  // `[[from, to], [from, to]]` — for when the part worth keeping is in two
+  // places and the frames between them are not wanted at all.
+  const windows = !range ? null : Array.isArray(range[0]) ? range : [range]
+  const image = windows ? { ...whole, frames: windows.flatMap(([from, to]) => whole.frames.slice(from, to)) } : whole
 
   // Crop to the sprite itself. A frame is mostly empty — the overworld one is
   // 17x18 of artwork centred in 32x32 — and drawing the padding would waste
@@ -184,7 +212,9 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
   }
 
   // One already-cropped frame to the escape sequence that draws it.
-  const toKitty = (pixels, slot) => {
+  const how = drawnAs()
+
+  const toFrame = (pixels, slot) => {
     const file = join(dir, `${label}-${slot}.png`)
 
     // Recreated rather than assumed. The scratch directory is deleted once the
@@ -197,7 +227,21 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
     const result = spawnSync(
       'chafa',
       [
-        '--format', 'kitty',
+        '--format', how.format,
+        // Only where they change something, so the kitty path emits byte for
+        // byte what it always did. That matters more than tidiness here: those
+        // bytes are what every existing cache holds and what the one tested
+        // setup draws.
+        //
+        // `--colors` is symbols-only because the pixel formats carry their own
+        // colour. chafa normally works this out from the terminal it writes to
+        // and cannot: its output is a pipe into the cache, so it sees no
+        // terminal and falls back to 16 colours, which turns a sprite to mud.
+        ...(how.format === 'symbols' ? ['--colors', how.colours, '--symbols', how.symbols] : []),
+        // A multiplexer swallows a graphics sequence unless it is wrapped in
+        // the multiplexer's own envelope. chafa's `auto` cannot see one either,
+        // for the same reason: it is looking at a pipe.
+        ...(how.passthrough === 'none' ? [] : ['--passthrough', how.passthrough]),
         // The width is worked out from the sprite's own proportions and the
         // pane's height, so the box already has the sprite's shape and the
         // image comes back filling it exactly — no gap to centre inside.
@@ -235,11 +279,24 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
 
   // Each frame is converted once, up front. Re-running chafa every frame would
   // spend more time launching processes than drawing.
-  const frames = image.frames.map(({ pixels }, index) => toKitty(crop(pixels), index))
+  //
+  // And a pose is converted once, however many frames hold it. GIFs hold a pose
+  // by repeating the frame — the Pokeball's rock is three pictures across
+  // eight frames — and a chafa run apiece was most of what a cold ball cost.
+  const converted = new Map()
+
+  const frames = image.frames.map(({ pixels }, index) => {
+    const cropped = crop(pixels)
+    const key = createHash('sha1').update(cropped).digest('hex')
+
+    if (!converted.has(key)) converted.set(key, toFrame(cropped, index))
+
+    return converted.get(key)
+  })
 
   // The pose the flicker trades against. Taken from the first frame, which is
   // the one the sprite is switched to anyway.
-  const ghost = toKitty(silhouette(crop(image.frames[0].pixels)), 'ghost')
+  const ghost = toFrame(silhouette(crop(image.frames[0].pixels)), 'ghost')
 
   // Each frame's own delay, not one delay for all of them. A sprite animation
   // is rarely evenly timed — one of these opens on a 650ms pose then runs at 50

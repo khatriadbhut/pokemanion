@@ -6,29 +6,81 @@ can tell what a session is doing from across the room without reading the screen
 
 17 ship with it, 1241 more can be summoned by name, and there is a Pokédex.
 
-**macOS + Ghostty only.** It draws sprites using the kitty graphics protocol and
-opens the split by driving Ghostty through AppleScript. It needs `chafa`
-(`brew install chafa`) and Ghostty in `/Applications`.
+**macOS and Linux, in any terminal.** Two questions, and both now have an
+answer everywhere: how the pane is opened, and how the sprite is drawn in it.
+`chafa` is required for the second one; there is no other dependency.
+
+**Opening it** — `src/launcher.mjs`, tried in this order, first match wins:
+
+| you are in | the pane is | needs |
+| --- | --- | --- |
+| **tmux** | a split, in any terminal | nothing |
+| **WezTerm** | a split | nothing |
+| **kitty** | a split | `npm run kitty -- --install`, then restart kitty |
+| **iTerm2** | a split | Automation permission, asked once |
+| **Ghostty on macOS** — the tested setup | a split | Ghostty in `/Applications`, and Accessibility |
+| **Ghostty on Linux** | its own strip window | nothing |
+| **Terminal.app** | its own strip window | nothing |
+| foot, konsole, gnome-terminal, xfce4-terminal, alacritty, xterm | its own strip window | nothing |
+
+Each is detected on a variable its own terminal sets — `$TMUX`, `$WEZTERM_PANE`,
+`$KITTY_LISTEN_ON`, `$TERM_PROGRAM`, `$TERM`. Never on a variable that is merely
+exported, which is a bug this already had: `$GHOSTTY_RESOURCES_DIR` is inherited
+by every shell started from a Ghostty and was still set inside a Terminal.app.
+
+**Drawing it** — `src/graphics.mjs`. chafa has four output formats and the pane
+asks the terminal which it wants, by sending the kitty graphics query and a
+Primary Device Attributes request together and reading the reply:
+
+| format | who gets it | note |
+| --- | --- | --- |
+| `kitty` | Ghostty, kitty, WezTerm, iTerm2 3.5+ | a frame is sent once and then referred to by id — 0.02MB against 35.9MB for four hundred draws |
+| `sixels` | foot, Konsole, xterm with sixel, and tmux **only when the terminal it is attached to has sixel** | one image per frame |
+| `iterm` | older iTerm2 | one image per frame |
+| `symbols` | **everything else** | octants in truecolor, not pixels. What Terminal.app, Alacritty and GNOME Terminal draw instead of nothing |
+
+**Inside tmux the reply is tmux's, not the terminal's.** Every tmux since 3.4 is
+built with sixel support and says so in DA1 regardless of what it is attached
+to, so the probe's answer has to be checked against `client_termfeatures` —
+tmux's own account of the terminal on the other end. Believing DA1 alone left
+the pane showing the literal text `SIXEL IMAGE (33x16)` and rows of `+` in
+Ghostty, which is the setup everything else here is tested against. Unknown
+counts as no: blocks are a Pokémon, an undeliverable sixel is nothing.
+
+The probe needs a tty, so the pane does it and writes the answer down; `npm run
+warm` and `npm run doctor` read that rather than asking again. With no tty and
+nothing written down it guesses from `$TERM`. `npm run graphics` asks and says
+what came back — run it *in* the terminal you are asking about. Override it all
+with `graphicsFormat` in `config.json`.
+
+Anything that changes those bytes is in the sprite cache key, so the four
+formats cannot be handed each other's frames.
 
 ## If the user wants to install it
 
 The quickest route is the plugin, which registers the hooks and needs no clone:
 
     /plugin marketplace add khatriadbhut/pokemanion
+
+then, as a separate prompt — Claude Code joins a two-line paste into one line
+and the first command swallows the second:
+
     /plugin install pokemanion@pokemanion
 
-It cannot install Ghostty — a GUI app that asks for a password — but it does
+It cannot install a terminal — a GUI app that asks for a password — but it does
 everything else the clone does, including chafa and the `claude --pikachu`
 shell wrapper. Clone it only to work on the code:
 
     git clone https://github.com/khatriadbhut/pokemanion.git
     cd pokemanion
 
-If `chafa` or Ghostty are missing, run **`npm run deps`** first — it installs
-both via Homebrew. Then run **`npm run setup`**, which is the whole install: it
-checks the prerequisites, downloads the sprites, renders them, registers the
-hooks for whichever agents it finds — Claude Code, Codex, or both — adds the
-matching shell wrapper, and sets the Ghostty resize keybind the pane needs.
+If `chafa` or a terminal is missing, run **`npm run deps`** first — on macOS it
+installs both via Homebrew; on Linux it installs chafa through whichever of apt,
+dnf, pacman, zypper or apk is there, and names the terminals rather than picking
+one for you. Then run **`npm run setup`**, which is the whole install: it checks
+the prerequisites, downloads the sprites, renders them, registers the hooks for
+whichever agents it finds — Claude Code, Codex, or both — adds the matching
+shell wrapper, and configures whichever terminal is going to open the pane.
 Safe to run more than once.
 
 Then tell them the things the script cannot do for them:
@@ -37,11 +89,16 @@ Then tell them the things the script cannot do for them:
    it. A plugin does not need that: `/reload-plugins` loads them into the session
    you are already in. Either way the pane opens with the next session, or right
    now if they type `--pikachu`.
-2. **Restart Ghostty** — it reads its config at startup.
+2. **Restart the terminal** — Ghostty and kitty both read their config at
+   startup, and setup has just written to it. Nothing to restart in WezTerm,
+   which needs no configuration.
 3. **Open a new terminal**, or `source ~/.zshrc`.
 4. **System Settings → Privacy & Security → Accessibility → enable Ghostty.**
    Opening a split means pressing keys, and macOS blocks that until allowed.
-   Without it no pane appears at all.
+   Without it no pane appears at all. **Ghostty on macOS only** — every other
+   terminal is handed the request over its own socket, which macOS has no
+   opinion about, and telling a Linux user to open System Settings is the most
+   confusing thing this project can say.
 5. **Trust the hooks when Codex asks**, and run `/hooks` inside Codex after any
    update to this project. It hashes each hook and skips the ones it has not
    reviewed, silently, so the sprite just stops reacting.

@@ -181,7 +181,25 @@ Issues and pull requests welcome, particularly:
 
 - **A sprite that reads better than one in the roster.** Bring the numbers;
   [design.md](design.md) says which ones and what the bar is.
-- **A Linux path.** Everything but the pane-opening is portable Node. It needs a
-  way to open a split that is not AppleScript.
+- **A terminal that gets a worse pane than it could.** `src/launcher.mjs` holds
+  one entry per terminal — how to detect that you are in it, and the command
+  that opens a pane — and `src/graphics.mjs` picks how the sprite is drawn in
+  it. Everything gets something now, so the open work is upgrades: a terminal
+  that could have a split but opens a window, or one that could have pixels but
+  gets blocks. [roadmap.md](roadmap.md) has the list.
+
+### Checking it on Linux
+
+There is no Linux machine behind this project, so `test/linux/Dockerfile` is the
+substitute: a Debian with chafa, tmux, xterm, Xvfb and ImageMagick, which is
+enough to run the suite, open a real pane in a real terminal, and **screenshot
+the result** rather than reasoning about it. The header of that file has the
+commands and the four bugs it has already found — three of which could not have
+shown up on macOS at all.
+
+Worth doing for anything that touches `src/launcher.mjs`, `src/graphics.mjs` or
+`src/sprite.mjs`. The screenshot is the point: two of those four bugs rendered
+as a pane full of rectangles, which is indistinguishable from a broken sprite
+until you look at it.
 
 `npm test` before you push.

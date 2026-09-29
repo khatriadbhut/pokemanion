@@ -1,8 +1,8 @@
 // Known-good combinations, so trying a different look is one command instead of
 // hand-editing four settings that interact.
 //
-// Usage: npm run preset            list them
-//        npm run preset clean      apply one and rebuild
+// Usage: node src/preset.mjs            list them
+//        node src/preset.mjs clean      apply one and rebuild
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -48,7 +48,7 @@ const [name] = process.argv.slice(2)
 if (!name || !PRESETS[name]) {
   const current = loadConfig()
 
-  console.log('\n  Presets — apply with:  npm run preset <name>\n')
+  console.log('\n  Presets — apply with:  node src/preset.mjs <name>\n')
 
   for (const [key, { what, cost }] of Object.entries(PRESETS)) {
     console.log(`  ${key.padEnd(9)} ${cost.padEnd(24)} ${what}`)

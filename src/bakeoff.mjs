@@ -1,7 +1,7 @@
 // Renders every sprite in assets/ at the same height, so they can be compared
 // in the terminal that has to display them rather than on a web page.
 //
-// Usage: npm run bakeoff [rows]
+// Usage: node src/bakeoff.mjs [rows]
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -76,4 +76,4 @@ for (const s of summary) {
   )
 }
 
-console.log(`\n  ${DIM}Pick one, then: npm run use <sprite>${RESET}\n`)
+console.log(`\n  ${DIM}Pick one, then: node src/use.mjs <sprite>${RESET}\n`)

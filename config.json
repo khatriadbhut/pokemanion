@@ -27,6 +27,8 @@
   "autoFit": false,
   "windowRows": 4,
   "windowCols": 34,
+  "graphicsFormat": null,
+  "paneSymbols": "block",
   "statusSprite": false,
   "frameMs": 333,
   "maxFrames": 4,
@@ -38,5 +40,5 @@
   "guestBudgetMb": 200,
   "guestKeepDays": 14,
   "pokeball": true,
-  "cardMs": 8000
+  "cardMs": 4000
 }

@@ -16,7 +16,7 @@
 //
 // Usage: npm run prune [-- --dry]
 
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { CACHE_VERSION, ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { POKEMON_DIR, busyFile, forget, guestsByAge, idleFile, isGuest } from './roster.mjs'
@@ -39,6 +39,37 @@ const sizeOf = (path) => {
 // Which cache entries belong to which sprite file. The cache is keyed by a hash
 // of the file path and its size, so the mapping is not recoverable from the
 // name — every entry records the sprite it was rendered from instead.
+//
+// Only the head of each entry is read. An entry is a whole animation's escape
+// sequences — twelve megabytes on average — and the two fields wanted here are
+// written first, so parsing all of it to reach them read 1.4GB to learn 116
+// names. It took 29 seconds.
+const HEAD_BYTES = 4096
+
+const headOf = (path) => {
+  const fd = openSync(path, 'r')
+
+  try {
+    const buffer = Buffer.alloc(HEAD_BYTES)
+
+    return buffer.toString('utf8', 0, readSync(fd, buffer, 0, HEAD_BYTES, 0))
+  } finally {
+    closeSync(fd)
+  }
+}
+
+// `{"v":7,"name":"assets/...","box"` — the order `loadSprite` writes them in.
+// Anything that does not start that way is parsed in full, as it always was.
+const HEAD = /^\{"v":(\d+),"name":("(?:[^"\\]|\\.)*")/
+
+const readEntry = (path) => {
+  const head = HEAD.exec(headOf(path))
+
+  if (head) return { v: Number(head[1]), name: JSON.parse(head[2]) }
+
+  return JSON.parse(readFileSync(path, 'utf8'))
+}
+
 const cacheBySprite = () => {
   const map = new Map()
 
@@ -52,7 +83,7 @@ const cacheBySprite = () => {
     let entry
 
     try {
-      entry = JSON.parse(readFileSync(path, 'utf8'))
+      entry = readEntry(path)
     } catch {
       continue
     }

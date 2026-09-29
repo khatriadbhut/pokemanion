@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { scanLines } from './interrupt.mjs'
 import { ROOT, STATE_DIR, loadConfig, readState } from './config.mjs'
 import { MIN_DELAY, loadSprite } from './sprite.mjs'
+import { currentFormat, detectFormat } from './graphics.mjs'
 import { emit, forget as forgetImages } from './place.mjs'
 import { alignFor, busyFile, busySpeedFor, flipBusyFor, idleFile, touch, transitionFor } from './roster.mjs'
 import { isRegistered } from './agents.mjs'
@@ -35,7 +36,20 @@ const CLEAR = '\x1b[2J'
 // top of it, so the whole walk cycle piles up on screen at once. Moving the
 // cursor does nothing about it — placements have to be deleted explicitly.
 // a=d clears them while leaving the transmitted image data alone.
-const DELETE_PLACEMENTS = '\x1b_Ga=d\x1b\\'
+// Only meaningful to a terminal that speaks the kitty protocol, and only
+// harmless in one.
+//
+// This is written before every single frame, and it is an APC sequence: a
+// terminal that understands it drops its image placements, and a terminal that
+// does not is supposed to swallow it. Terminal.app does not swallow it — it
+// prints the payload, so `Ga=d` appeared as literal text among the octants,
+// twice a second forever. Found by rendering a Pikachu in it and reading the
+// window back, which is the only way this was ever going to surface.
+//
+// Empty until the format is known, and the format is not known until the pane
+// has asked the terminal — which happens below, before anything is drawn. Every
+// use of this is further down the file than that.
+let DELETE_PLACEMENTS = ''
 
 const config = loadConfig()
 const args = process.argv.slice(2)
@@ -189,6 +203,31 @@ const fitToSprite = async (target) => {
 
 const fitted = config.autoFit === false ? null : await fitToSprite(rows)
 
+// Ask the terminal how it wants to be given a picture, before anything is
+// converted into one.
+//
+// This is the only place with a tty to ask on, which is why it happens here and
+// not in the hook that opened the pane. The answer is written down, so
+// everything else — `npm run warm`, `npm run doctor`, the next pane in the same
+// terminal — reads it rather than asking again.
+//
+// Ordered after fitToSprite deliberately. That function drives the pane's
+// height by pressing keys and reading SIGWINCH, and it is the more fragile of
+// the two; putting a stdin probe in front of it would make any problem here
+// look like a resize problem. It is also why the probe restores raw mode and
+// pauses stdin on every path out — the pane does not read stdin again, and a
+// resumed one would hold the process open after the sprite is gone.
+//
+// Best effort, like everything else on the way in. A probe that throws must not
+// be the reason there is no Pokemon: the guess from the environment is right
+// for every terminal anyone has actually reported using.
+try {
+  await detectFormat(config)
+} catch {}
+
+// Now that the terminal has answered, the one sequence that is kitty-only.
+DELETE_PLACEMENTS = currentFormat(config) === 'kitty' ? '\x1b_Ga=d\x1b\\' : ''
+
 // Convert the frames only once the pane has stopped moving, and to the height
 // it actually settled on rather than the height that was asked for. Rendering
 // first and resizing afterwards is what leaves the sprite too tall for its pane
@@ -341,19 +380,27 @@ try {
 //   63-66  still open, beginning to settle
 //   70+    shut again
 //
-// One window, used three ways. It opens on eleven frames of rocking (30-40) and
-// then bursts (41-66), which is exactly the two things a wait is made of, so the
-// halves are taken as slices of this rather than loaded as sprites of their own.
+// The file's rock is not one rock. 4-16 is a slow, lopsided sway; 17-24 is an
+// even one — left, centre, right, centre, two frames apiece; and 25-40 is the
+// frantic finish, a new pose every 40ms that jumps straight from one side to
+// the other. The wait used to loop 30-40, that last part, which is why it read
+// as lag rather than rocking: eleven frames of twitching, looped, with a seam
+// where the order broke.
 //
-// Not just to save the chafa run, though it saves that too — a pane that had to
-// render its own wait sprite would stall for a couple of seconds at the moment
-// somebody is standing there waiting. The reason is that `sharedBounds` measures
-// whatever frames it is given, so a separately loaded rock would be sized
-// against a box with no open lid in it, and the ball would visibly jump bigger
-// the instant it started to open. Sharing one box is what makes the wait and the
-// opening a single continuous animation rather than two that meet.
-const BALL_ARRIVING = [30, 67]
-const ROCK_FRAMES = 11
+// So the wait is 17-24 and loops cleanly, ending on the centre it starts
+// beside. The burst is 41-66, which picks up from that centre as naturally as
+// from any other frame, and the frantic part in between is not loaded at all.
+//
+// Both come from one sprite rather than two. `sharedBounds` measures whatever
+// frames it is given, so a separately loaded rock would be sized against a box
+// with no open lid in it, and the ball would visibly jump bigger the instant it
+// started to open. Sharing one box is what makes the wait and the opening a
+// single continuous animation rather than two that meet.
+const BALL_ARRIVING = [
+  [17, 25],
+  [41, 67],
+]
+const ROCK_FRAMES = 8
 
 const ball = (() => {
   if (config.pokeball === false) return null
@@ -418,7 +465,8 @@ const framesOf = (sprite) =>
     ? sprite.frames.map((_, index) => ({ at: index, sprite, delay: Math.max(MIN_DELAY, sprite.delays[index]) }))
     : []
 
-const ballFrames = () => framesOf(ball)
+// One rock and then the burst, which is what an arrival is.
+const ballFrames = () => [...framesOf(rocking), ...framesOf(opening)]
 
 // Only the burst. For a pane that has been rocking: the wait ends on the frame
 // this begins on, so the ball simply carries on and opens.
@@ -899,7 +947,7 @@ const showCard = (name) => {
 
   try {
     cardLines = paneCard(dexEntry(name), paneRows)
-    cardUntil = Date.now() + (config.cardMs ?? 8000)
+    cardUntil = Date.now() + (config.cardMs ?? 4000)
   } catch {}
 }
 
@@ -916,7 +964,7 @@ const checkCard = () => {
     return
   }
 
-  cardUntil = Date.now() + (config.cardMs ?? 8000)
+  cardUntil = Date.now() + (config.cardMs ?? 4000)
   clearPane()
 }
 
@@ -1117,16 +1165,17 @@ tick()
 // cache directory and can delete a few hundred megabytes; doing it on the way
 // in would show an empty pane while it worked. A session opening is also the
 // only moment a guest can have become stale since the last one.
-setTimeout(async () => {
-  // Not under test. Pruning walks the whole cache — hundreds of megabytes — and
-  // it is synchronous, so the suite spent fourteen seconds waiting for a pane it
-  // only needed four seconds of.
+setTimeout(() => {
+  // Not under test. The suite would be deleting cache entries out from under
+  // the panes it is timing.
   if (process.env.PIXEL_RUNNER_KEEP_PANE === '1') return
 
+  // In a process of its own, never this one. Synchronous means the frame loop
+  // waits for it, and it used to run here: the Pokemon that had just come out
+  // of the ball stood frozen beside its stats for as long as the walk took,
+  // which was 29 seconds on a 1.4GB cache.
   try {
-    const { prune } = await import('./prune.mjs')
-
-    prune()
+    spawn(process.execPath, [join(ROOT, 'src', 'prune.mjs')], { detached: true, stdio: 'ignore' }).unref()
   } catch {}
 }, 2000)
 
@@ -1137,8 +1186,12 @@ const describe = (sprite, label) =>
   `  ${label.padEnd(8)} ${species ?? sprite.name} — ${sprite.box.width}x${sprite.box.height}, ` +
   `${sprite.frames.length} frames, ${sprite.cols}x${sprite.rows} cells`
 
-if ((process.stdout.rows ?? 0) > paneRows + 2) {
+// One more row than it used to ask for, because it now prints one more line.
+// The guard is what keeps this from pushing the image up and out of a pane
+// fitted exactly to the sprite, so it has to move when the line count does.
+if ((process.stdout.rows ?? 0) > paneRows + 3) {
   console.error(
-    `\x1b[${paneRows + 2}H${describe(idle, 'waiting')}\n${describe(busy, 'working')}\n  ctrl-c to stop`,
+    `\x1b[${paneRows + 2}H${describe(idle, 'waiting')}\n${describe(busy, 'working')}\n` +
+      `  drawn as ${currentFormat(config)}\n  ctrl-c to stop`,
   )
 }

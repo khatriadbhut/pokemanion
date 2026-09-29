@@ -13,7 +13,7 @@ is happening.
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](package.json)
 [![Agents](https://img.shields.io/badge/works%20with-Claude%20Code%20%2B%20Codex-8957e5.svg)](#quick-install)
-[![Platform](https://img.shields.io/badge/tested%20on-macOS%20%2B%20Ghostty-lightgrey.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/macOS%20%2B%20Linux-any%20terminal-lightgrey.svg)](#requirements)
 
 </div>
 
@@ -65,8 +65,11 @@ the machine.
 
 ## Quick install
 
-**Get [Ghostty](https://ghostty.org/download) first** if you do not have it. The
-pane is a Ghostty split. The other requirement, chafa, is fetched for you.
+**Your terminal will do.** The sprite is drawn as pixels where the terminal
+supports them and as coloured blocks where it does not, so there is nothing to
+install first — though [Ghostty](https://ghostty.org/download),
+[WezTerm](https://wezterm.org/installation) and [kitty](https://sw.kovidgoyal.net/kitty/binary/)
+give the best-looking result. chafa, the one real requirement, is fetched for you.
 
 Then, at your agent:
 
@@ -78,8 +81,16 @@ Then, at your agent:
 
 ```
 /plugin marketplace add khatriadbhut/pokemanion
+```
+
+then
+
+```
 /plugin install pokemanion@pokemanion
 ```
+
+One at a time. Claude Code's prompt joins a two-line paste into one line, and
+the first command swallows the second.
 
 </td>
 <td valign="top" width="50%">
@@ -87,36 +98,59 @@ Then, at your agent:
 **Codex**
 
 ```
-/plugin marketplace add khatriadbhut/pokemanion
-/plugin add pokemanion@pokemanion
+/plugins
 ```
+
+Then **Add Marketplace**, enter
+`khatriadbhut/pokemanion`, and install
+pokemanion from the tab that appears.
 
 </td>
 </tr>
 </table>
 
+Then, in Claude Code, `/reload-plugins` — or restart Codex — and type:
+
+```
+--charizard       switch the pane to any of the 1258, live
+--random          roll one
+--dex current     what is on screen, answered in the pane
+```
+
+**macOS + Ghostty only:** allow Ghostty in System Settings → Privacy & Security
+→ Accessibility. Opening a split there means pressing keys, and without this no
+pane appears at all. tmux, WezTerm, kitty and the rest need no permission.
+
+<details>
+<summary><b>More on installing</b> — Codex from a shell, restarting the terminal, scopes</summary>
+
+<br>
+
+Codex's is a browser, not a command that takes arguments — there is no
+`/plugin`, singular. If you would rather type it, the same thing from a shell,
+before you start Codex:
+
+```sh
+codex plugin marketplace add khatriadbhut/pokemanion
+codex plugin add pokemanion@pokemanion
+```
+
 Nothing to clone or build; the agent fetches the project itself and the sprites
 ship with it.
 
-Installing does not switch it on by itself. In Claude Code, `/reload-plugins`
-does that without restarting anything. Then type `--pikachu` and a Pokemon
-appears. In Codex, restart it.
+**Restart your terminal** if it is Ghostty or kitty, which read their
+configuration at startup and have just had a line written to it. And **open a
+new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
 
-Two more, and neither is optional:
-
-- **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
-  Accessibility. Skip it and everything installs perfectly and no pane ever
-  appears.
-- **Restart Ghostty**, which reads its configuration at startup, and **open a
-  new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
-
-Install it in the menu rather than by typing the command, if you are offered the
-choice: `/plugin` on its own lets you pick **user** scope, which is one Pokemon
-for every session. Installed against a single project it appears there and
-nowhere else, with nothing to say why.
+In Claude Code, install it in the menu rather than by typing the command, if you
+are offered the choice: `/plugin` on its own lets you pick **user** scope, which
+is one Pokemon for every session. Installed against a single project it appears
+there and nowhere else, with nothing to say why.
 
 Already have it from source? Installing the plugin too is harmless. It stands
 aside instead of doubling up, and tells you how to switch.
+
+</details>
 
 ---
 
@@ -162,20 +196,40 @@ at the switch; seven were given animations of their own.
 
 ## Requirements
 
-**Node ≥ 20** (no dependencies), **chafa**, and a terminal that speaks the
-[kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
-The sprite is a real image, not text.
+**Node ≥ 20** (no dependencies) and **chafa**. That is the whole list: there is
+no longer a terminal requirement, because the sprite is drawn in whatever the
+terminal can do.
 
-| | draws the sprite | opens the pane | `claude --pikachu` |
-| --- | :---: | :---: | :---: |
-| **macOS + Ghostty** — the only tested setup | yes | yes | yes |
-| macOS + kitty, iTerm2, WezTerm, Warp | yes | no | yes |
-| Linux + kitty, Konsole | should | no | untested |
-| Alacritty, Terminal.app, Windows | no | no | no |
+| you are in | the pane is | the sprite is drawn as |
+| --- | --- | :---: |
+| **Ghostty on macOS** — the setup everything is tested against | a split | pixels |
+| **tmux**, in any terminal | a split | pixels or blocks¹ |
+| **WezTerm** · **kitty**² · **iTerm2** | a split | pixels |
+| **Ghostty on Linux** · **Terminal.app** | its own strip window | pixels · blocks |
+| foot · konsole · gnome-terminal · xfce4-terminal · alacritty · xterm | its own strip window | pixels or blocks |
+| anything else, over ssh, in a terminal nobody has heard of | run it yourself³ | blocks |
 
-Only the pane-opening is macOS-specific. It splits Ghostty using AppleScript.
-Where the table says *no*, run the pane yourself in a second terminal with
-`npm run window 4 --session=<id>`.
+The pane asks your terminal what it can do — the kitty graphics protocol, sixel,
+or neither — and picks the best of chafa's four output formats. **Neither is a
+real answer**: that is the `symbols` format, octants in truecolor, and it is
+what Terminal.app and Alacritty draw instead of the nothing they drew before.
+
+`npm run graphics`, run *in* the terminal you are asking about, says what yours
+answered and what it will get. `npm run doctor` names the launcher it would use
+and the command it would run.
+
+¹ Inside tmux it depends on the terminal tmux is *attached* to, not on tmux.
+tmux 3.4 and later can carry sixels, but only as far as a terminal that can show
+them — WezTerm, foot, Konsole. Attached to one that cannot, which includes
+Ghostty and Terminal.app, the sprite is drawn in blocks. Asking tmux for sixels
+it cannot deliver used to leave the pane showing `SIXEL IMAGE (33x16)` and rows
+of `+`, and that is what the second half of this row is now for.
+
+² kitty needs `npm run kitty -- --install` — remote control and the splits
+layout — then a restart. iTerm2 asks for Automation permission once.
+
+³ `npm run window 4 --session=<id>` in a second terminal. Nothing can open a
+window for you there; everything else works.
 
 ## Commands
 
@@ -218,9 +272,17 @@ claude --resume --charizard  # combines with everything else
 ## Using it with Codex
 
 <details>
-<summary><b>Two things specific to Codex</b></summary>
+<summary><b>Three things specific to Codex</b></summary>
 
 <br>
+
+**Its plugin commands are not Claude Code's.** Codex has no `/plugin`; it has
+**`/plugins`**, which opens a browser rather than taking arguments, and adding
+this marketplace is the **Add Marketplace** tab inside it. From a shell it is
+`codex plugin marketplace add khatriadbhut/pokemanion`, then
+`codex plugin add pokemanion@pokemanion` — note `add`, where Claude Code says
+`install`. There is no `/reload-plugins` either, so a fresh session is the only
+way to pick a new plugin up.
 
 **It will ask you to trust the hooks.** They are worth reading first, in
 `~/.codex/hooks.json`. Codex silently skips any it has not reviewed, so after
@@ -319,7 +381,7 @@ Guests are limited by `guestBudgetMb` (200) and `guestKeepDays` (14).
 | `workingTimeoutMs` | `120000` | how long after the last hook we still count as working |
 | `transitions` | `true` | animate the change between the two sprites |
 | `pokeball` | `true` | open a Pokéball when one arrives |
-| `cardMs` | `8000` | how long the stats stay beside the sprite; `0` disables |
+| `cardMs` | `4000` | how long the stats stay beside the sprite; `0` disables |
 | `guestBudgetMb` | `200` | disk the guests may hold |
 | `updateCheck` | `true` | look for a newer version once a day, and say so once |
 | `showVersion` | `true` | the version along the pane's bottom edge |
@@ -340,5 +402,6 @@ anyone, and nothing here is sold.
 ## Contributing
 
 Issues and pull requests welcome, particularly a sprite that reads better than
-one in the roster, or a Linux path. [docs/developer.md](docs/developer.md) is
+one in the roster, or a terminal it cannot open a pane in yet.
+[docs/developer.md](docs/developer.md) is
 where to start.

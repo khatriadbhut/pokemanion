@@ -17,6 +17,7 @@ import { existsSync as fileExists, readdirSync } from 'node:fs'
 import { ROOT, STATE_DIR, loadConfig } from './config.mjs'
 import { isFetched, pickFor, requestedName, requestedSpecies } from './roster.mjs'
 import { rememberSpecies, rememberedSpecies } from './assigned.mjs'
+import { becomesTheTerminal, chooseLauncher, launchCommand, paneArgv, terminalRows } from './launcher.mjs'
 
 // One sprite per session, so the pid is recorded per session too. A window
 // belonging to one Claude must not be closed when a different one exits.
@@ -445,6 +446,81 @@ const JOBS_DIR = join(homedir(), '.claude', 'jobs')
 export const isBackgroundAgent = (id, source = null) =>
   fileExists(join(JOBS_DIR, String(id ?? '').slice(0, 8)))
 
+// The window a parked agent is being watched in.
+//
+// A background agent has no terminal of its own, so it gets no pane — but it is
+// not invisible. Claude Code parks it inside an ordinary session's window and
+// draws it there, so `--random` typed at an agent looks exactly like `--random`
+// typed at the session it was forked from. It was not the same: the claim went
+// to a species file no pane was watching, the sprite on screen never moved, and
+// the reply still said "back in a moment". Three rolls in a row, and the pane
+// sat on the one from before the fork.
+//
+// Claude Code writes a file per running process under ~/.claude/sessions. A
+// parked agent's own file says `kind: "bg"` and carries its `jobId`; the
+// interactive session hosting it names that same job in `parkedJobId`. So the
+// window to change is the one pointing back at this agent — not the focused
+// one, not the newest, which would move a sprite in a window nobody was looking
+// at and leave this one still wrong.
+//
+// The host has to still be alive. A session that has exited is a window that is
+// no longer on screen, and its claim would be read by nothing.
+//
+// Everything else is its own pane, which is what every caller assumed before:
+// an ordinary session, an agent nobody has parked, a registry that has moved on
+// or was never written.
+const CLAUDE_SESSIONS_DIR = join(homedir(), '.claude', 'sessions')
+
+const registeredSessions = () => {
+  const rows = []
+
+  try {
+    for (const name of readdirSync(CLAUDE_SESSIONS_DIR)) {
+      if (!name.endsWith('.json')) continue
+
+      try {
+        rows.push(JSON.parse(readFileSync(join(CLAUDE_SESSIONS_DIR, name), 'utf8')))
+      } catch {}
+    }
+  } catch {}
+
+  return rows
+}
+
+const processAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Split from paneSessionFor for the same reason chooseSpecies is split from
+// openWindow: the rule can then be tested against invented registries, rather
+// than against whatever happens to be running on the machine at the time.
+export const hostSession = (id, rows, alive = processAlive) => {
+  if (!id) return id
+
+  const self = rows.find((row) => row.sessionId === id)
+
+  if (!self || self.kind !== 'bg') return id
+
+  // `jobId` rather than the id itself, because the two only happen to agree —
+  // the job is named with the first eight characters of the session that made
+  // it, and nothing promises that stays true.
+  const job = self.jobId ?? String(id).slice(0, 8)
+
+  const host = rows
+    .filter((row) => row.sessionId && row.parkedJobId === job && alive(row.pid))
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
+
+  return host ? host.sessionId : id
+}
+
+export const paneSessionFor = (id) => hostSession(id, registeredSessions())
+
 // Who this session gets, and the whole of that decision.
 //
 // Three rules, in this order, and the order is the point:
@@ -731,33 +807,146 @@ export const openWindow = (id, source = null, forced = null) => {
 
   logChoice(id, species, reason.why)
 
-  if (config.windowMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species, pending)
+  const wantedMode = config.windowMode === 'split' ? 'split' : 'window'
+  const launcher = chooseLauncher()
 
-  const args = [
-    '-na',
-    'Ghostty.app',
-    '--args',
-    // A window just tall enough for the sprite, and narrow. Ghostty sizes in
-    // cells, which is what the sprite is measured in too.
-    `--window-height=${rows + 1}`,
-    `--window-width=${config.windowCols ?? 34}`,
-    '--window-title=pikachu',
-    '--window-decoration=false',
-    '-e',
-    process.execPath,
-    join(ROOT, 'src', 'window.mjs'),
-    String(rows),
-    `--session=${safe(id)}`,
-    ...(species ? [`--species=${species}`] : []),
-    ...(pending ? [`--pending=${pending}`] : []),
-  ]
+  // No terminal here this knows how to drive: a Mac without Ghostty, a Linux in
+  // GNOME Terminal, a session inside something with no command line at all.
+  //
+  // This is the same nothing that happened before there were launchers, and it
+  // is deliberately still nothing — opening a terminal the user did not choose,
+  // to put a Pokemon in, is worse than no Pokemon. What is new is that it says
+  // which question it failed, in the log and on stderr, rather than leaving a
+  // session that simply never grows a pane with nothing to explain it.
+  if (!launcher) {
+    console.error(
+      'pokemanion: nothing here can open a window for the pane.\n' +
+        '  run it yourself in a second terminal: npm run window 4 --session=<id>',
+    )
+    logSplit(id, { step: 'no launcher', platform: process.platform, term: process.env.TERM_PROGRAM ?? null })
 
-  // Detached and with its streams released, so the hook can exit immediately
-  // and the window is not tied to the lifetime of a hook that lives for
-  // milliseconds.
-  const child = spawn('open', args, { detached: true, stdio: 'ignore' })
+    return false
+  }
 
-  child.unref()
+  // The macOS Ghostty path, exactly as it was. Split mode is a keystroke and a
+  // wait for a login shell; window mode is `open -na`, because the Ghostty
+  // binary refuses to start a terminal from the command line on macOS and says
+  // so in its own --help.
+  if (launcher.applescript) {
+    if (wantedMode === 'split') return openSplit(rows, config.splitShrink ?? 120, config.splitGrow ?? 0, id, species, pending)
+
+    const args = [
+      '-na',
+      'Ghostty.app',
+      '--args',
+      // A window just tall enough for the sprite, and narrow. Ghostty sizes in
+      // cells, which is what the sprite is measured in too.
+      `--window-height=${rows + 1}`,
+      `--window-width=${config.windowCols ?? 34}`,
+      '--window-title=pikachu',
+      '--window-decoration=false',
+      '-e',
+      ...paneArgv({ rows, session: safe(id), species, pending }),
+    ]
+
+    // Detached and with its streams released, so the hook can exit immediately
+    // and the window is not tied to the lifetime of a hook that lives for
+    // milliseconds.
+    const child = spawn('open', args, { detached: true, stdio: 'ignore' })
+
+    child.unref()
+
+    return true
+  }
+
+  const plan = {
+    rows,
+    cols: config.windowCols ?? 34,
+    argv: paneArgv({ rows, session: safe(id), species, pending }),
+    env: process.env,
+    rowsAvailable: terminalRows(),
+  }
+
+  // A launcher that cannot split falls back to its own window rather than to
+  // nothing. Ghostty on Linux is the case: it can start a terminal running a
+  // command, but splitting one is a keybind and there is no command for it. A
+  // strip window is what `windowMode: "window"` has always been, so this is
+  // giving someone the other supported layout, not a degraded one — and saying
+  // so, because a setting that quietly does something else is worse than either.
+  let command = launchCommand(launcher, wantedMode, plan)
+
+  if (!command && wantedMode === 'split') {
+    command = launchCommand(launcher, 'window', plan)
+
+    if (command) logSplit(id, { step: 'split unsupported, opening a window', launcher: launcher.name })
+  }
+
+  if (!command) {
+    console.error(`pokemanion: ${launcher.label} cannot open the pane`)
+    logSplit(id, { step: 'launcher cannot open', launcher: launcher.name, mode: wantedMode })
+
+    return false
+  }
+
+  const [program, args] = command
+
+  // A launcher that *becomes* the terminal is started and let go, exactly like
+  // the `open -na` above and for the same reason: it runs for as long as the
+  // pane does, and this hook has milliseconds to live. Waiting for it would
+  // mean killing it.
+  //
+  // The cost is honest and is the same cost the macOS window path has always
+  // paid — there is no exit status to report, because the only status it will
+  // ever have is "the pane closed". `windowIsRunning` is what answers that
+  // question afterwards.
+  if (becomesTheTerminal(launcher)) {
+    try {
+      const child = spawn(program, args, { detached: true, stdio: 'ignore' })
+
+      child.unref()
+    } catch (error) {
+      console.error(`pokemanion: ${launcher.label} could not open the pane — ${String(error).slice(0, 120)}`)
+      logSplit(id, { step: 'launcher failed to start', launcher: launcher.name, error: String(error).slice(0, 200) })
+
+      return false
+    }
+
+    logSplit(id, { step: 'launched, detached', launcher: launcher.name, mode: wantedMode })
+
+    return true
+  }
+
+  // Everything else is a client: it hands the request to a terminal that is
+  // already running and exits in a few milliseconds. Waiting is therefore both
+  // cheap and worth it — the status is the difference between knowing the pane
+  // opened and assuming it. The AppleScript path had to reconstruct that from
+  // whether a login shell appeared.
+  const result = spawnSync(program, args, { encoding: 'utf8', timeout: 5000 })
+
+  const failed = result.status !== 0
+
+  logSplit(id, {
+    step: failed ? 'launcher failed' : 'launched',
+    launcher: launcher.name,
+    mode: wantedMode,
+    error: failed ? `${result.stderr ?? ''}${result.error ? ` ${result.error}` : ''}`.trim().slice(0, 200) : null,
+  })
+
+  if (failed) {
+    const message = `${result.stderr ?? ''}`.trim()
+
+    // The one failure worth translating. kitty answers a remote control request
+    // it has not been configured to accept with a message about a socket, which
+    // reads as a bug in this rather than a line missing from kitty.conf.
+    console.error(
+      /allow_remote_control|listen_on|not allowed/i.test(message)
+        ? 'pokemanion: kitty has not been told to accept remote control.\n' +
+            '  run: npm run kitty -- --install, then restart kitty.'
+        : `pokemanion: ${launcher.label} could not open the pane — ${message || `exit ${result.status}`}`,
+    )
+
+    return false
+  }
 
   return true
 }

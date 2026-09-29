@@ -20,22 +20,21 @@
 // sprite does not work for the first minute of the first session, and then it
 // does.
 //
-// Ghostty is deliberately not fetched. It is a GUI application, a cask, and can
-// ask for a password — and the pane is a Ghostty split, so anyone who can see a
-// pane at all already has it.
+// A terminal is deliberately not fetched. Ghostty is a GUI application, a cask,
+// and can ask for a password — and the pane opens inside a terminal you are
+// already sitting in, so anyone who can see a pane at all already has one.
+//
+// The question "is there a terminal here that can open the pane?" used to live
+// in this file as `hasGhostty`, a check for /Applications/Ghostty.app. It is
+// `chooseLauncher` in src/launcher.mjs now, because the answer stopped being a
+// single path on a single platform.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { STATE_DIR } from './config.mjs'
 
 const have = (command) => spawnSync('command', ['-v', command], { shell: true, encoding: 'utf8' }).status === 0
-
-// The pane is a Ghostty split, so this is the difference between the sprite
-// working and nothing happening at all. Checked in several places rather than
-// assumed, because the failure without it is silent: AppleScript answers
-// "Can't get application" with error -1728 and the hook has nowhere to say so.
-export const hasGhostty = () => existsSync('/Applications/Ghostty.app')
 
 const note = (what) => {
   try {
@@ -47,11 +46,17 @@ const note = (what) => {
 export const bootstrapChafa = () => {
   if (have('chafa')) return 'already installed'
 
-  // Without Homebrew there is nothing to do that would not be worse than doing
-  // nothing — MacPorts wants a password, and building from source from inside a
-  // hook is not a thing to start.
+  // Homebrew and nothing else, on purpose, and the reason is the sudo in every
+  // other entry of that list. MacPorts, apt, dnf and the rest all want a
+  // password, and a background process started by a hook has no terminal to ask
+  // on — it would hang forever holding the package manager's lock, which is a
+  // considerably worse outcome than no chafa. Homebrew is the one that installs
+  // a formula without asking anybody anything.
+  //
+  // So on Linux this reliably does nothing, and says so in the log. `npm run
+  // deps` is the route there, and it has a terminal to ask on.
   if (!have('brew')) {
-    note({ step: 'chafa missing, no brew', fix: 'npm run deps' })
+    note({ step: 'chafa missing, no unattended installer', platform: process.platform, fix: 'npm run deps' })
 
     return 'no package manager'
   }
@@ -83,11 +88,26 @@ if (process.argv[1] && process.argv[1].endsWith('bootstrap.mjs')) {
 // clone is buried in a plugins directory. So the advice is chosen here, from
 // what is actually on the machine.
 //
-// There is no fourth option: chafa publishes no prebuilt macOS binary, so
-// without a package manager it is a source build.
-export const chafaFix = () => {
-  if (have('brew')) return 'chafa — it draws the sprite (brew install chafa)'
-  if (have('port')) return 'chafa — it draws the sprite (sudo port install chafa)'
+// There is no fourth option on a Mac: chafa publishes no prebuilt macOS binary,
+// so without a package manager it is a source build. On Linux it is packaged
+// everywhere, which is why that list is longer and none of it ends in a plea to
+// install a package manager first.
+export const chafaFix = (platform = process.platform, exists = have) => {
+  const managers = [
+    ['brew', 'brew install chafa'],
+    ['port', 'sudo port install chafa'],
+    ['apt-get', 'sudo apt-get install chafa'],
+    ['dnf', 'sudo dnf install chafa'],
+    ['pacman', 'sudo pacman -S chafa'],
+    ['zypper', 'sudo zypper install chafa'],
+    ['apk', 'sudo apk add chafa'],
+  ]
 
-  return 'chafa — it draws the sprite, and needs Homebrew or MacPorts to install (https://brew.sh)'
+  const found = managers.find(([command]) => exists(command))
+
+  if (found) return `chafa — it draws the sprite (${found[1]})`
+
+  return platform === 'darwin'
+    ? 'chafa — it draws the sprite, and needs Homebrew or MacPorts to install (https://brew.sh)'
+    : 'chafa — it draws the sprite (https://hpjansson.org/chafa/download/)'
 }

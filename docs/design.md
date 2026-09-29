@@ -230,7 +230,7 @@ per cell. Sextants are the best looking if your font has them.
 Check what your font supports before choosing:
 
 ```sh
-npm run fontcheck
+node src/fontcheck.mjs
 ```
 
 Any family that renders as a row of identical empty rectangles is missing.
@@ -253,7 +253,7 @@ seamless and strictly better.
 See both, with every sampler, in your own terminal:
 
 ```sh
-npm run compare
+node src/compare.mjs
 ```
 
 ## Layout

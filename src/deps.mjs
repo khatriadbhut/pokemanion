@@ -1,17 +1,23 @@
-// Installs the two things this needs that are not Node: chafa and Ghostty.
+// Installs the two things this needs that are not Node: chafa, and a terminal
+// that can draw in.
 //
 // Separate from `npm run setup` on purpose. Setup edits config files you own
-// and can undo; this installs software, and Ghostty is a whole terminal
-// emulator. Downloading an application because someone ran a setup script is
-// not a thing to do quietly, so setup checks and names what is missing, and
-// this is what you run when you want it done for you.
+// and can undo; this installs software, and the second of those is a whole
+// terminal emulator. Downloading an application because someone ran a setup
+// script is not a thing to do quietly, so setup checks and names what is
+// missing, and this is what you run when you want it done for you.
 //
 // It will not install a package manager for you. Homebrew's installer wants a
 // password, writes to /opt, edits your shell profile and does not put `brew` on
 // the PATH of the shell that ran it — a chain of things to go wrong in the
 // middle of someone else's install script, to set up software they did not ask
-// for. If neither Homebrew nor MacPorts is here, this says what to do instead
-// and stops. Both tools have a route that needs no package manager at all.
+// for. If there is no package manager it recognises, this says what to do
+// instead and stops. Every tool here has a route that needs no package manager.
+//
+// The terminal half is macOS only, and the comment above `terminalPresent` says
+// why: on Linux there are three that work, packaged differently everywhere, and
+// choosing one on someone's behalf is further than this should go. It names
+// them instead.
 //
 // Usage: npm run deps          — install what is missing
 //        npm run deps -- --dry — say what it would do
@@ -31,12 +37,45 @@ const say = (line = '') => console.log(line)
 
 const have = (command) => spawnSync('command', ['-v', command], { shell: true, encoding: 'utf8' }).status === 0
 
-// Homebrew first because it has both, MacPorts second because it has chafa.
-// Checked once here rather than per tool, so the report below can say which one
-// it is going to use.
-const manager = have('brew') ? 'brew' : have('port') ? 'port' : null
+// Which package manager is here, and how it installs one package.
+//
+// Homebrew first because on a Mac it has both of these, MacPorts second because
+// it has chafa. The Linux entries are the five that cover almost everything —
+// and they are here rather than in a comment because chafa is packaged
+// everywhere, so on Linux this is a one-line install rather than the source
+// build macOS needs when Homebrew is absent.
+//
+// `sudo` where the manager needs it and not where it does not. Homebrew refuses
+// to run under sudo outright, and prefixing it would turn a working install into
+// an error message about not running Homebrew as root.
+const MANAGERS = [
+  { name: 'brew', install: (pkg) => ['brew', ['install', pkg]] },
+  { name: 'port', install: (pkg) => ['sudo', ['port', 'install', pkg]] },
+  { name: 'apt-get', install: (pkg) => ['sudo', ['apt-get', 'install', '-y', pkg]] },
+  { name: 'dnf', install: (pkg) => ['sudo', ['dnf', 'install', '-y', pkg]] },
+  { name: 'pacman', install: (pkg) => ['sudo', ['pacman', '-S', '--noconfirm', pkg]] },
+  { name: 'zypper', install: (pkg) => ['sudo', ['zypper', 'install', '-y', pkg]] },
+  { name: 'apk', install: (pkg) => ['sudo', ['apk', 'add', pkg]] },
+]
+
+const found = MANAGERS.find((entry) => have(entry.name)) ?? null
+const manager = found?.name ?? null
+
+const mac = process.platform === 'darwin'
 
 const GHOSTTY_APP = '/Applications/Ghostty.app'
+
+// The terminal half of this is a macOS question and a Linux non-question.
+//
+// On a Mac the pane is a Ghostty split, Ghostty is a cask, and `brew install
+// --cask ghostty` is a real answer. On Linux there are three terminals that
+// work, they are packaged differently in every distribution, and two of them
+// are usually installed from the project's own repository — so this names them
+// and installs none of them. Downloading a terminal emulator someone did not
+// ask for is already at the edge of what this script should do; guessing which
+// one, on a platform where the guess is likely wrong, is over it.
+const terminalPresent = () =>
+  mac ? existsSync(GHOSTTY_APP) : have('wezterm') || have('kitty') || have('ghostty')
 
 const NEEDED = [
   {
@@ -45,33 +84,44 @@ const NEEDED = [
     present: () => have('chafa'),
     // MacPorts ships it too, which is worth knowing: without it the only route
     // is building from source, since there is no prebuilt macOS binary.
-    command: () =>
-      manager === 'brew' ? ['brew', ['install', 'chafa']] : manager === 'port' ? ['sudo', ['port', 'install', 'chafa']] : null,
-    without: [
-      'MacPorts:     sudo port install chafa',
-      'from source:  https://hpjansson.org/chafa/download/',
-      `${DIM}there is no prebuilt macOS binary, so one of those two it is${RESET}`,
-    ],
+    command: () => found?.install('chafa') ?? null,
+    without: mac
+      ? [
+          'MacPorts:     sudo port install chafa',
+          'from source:  https://hpjansson.org/chafa/download/',
+          `${DIM}there is no prebuilt macOS binary, so one of those two it is${RESET}`,
+        ]
+      : [
+          'Debian/Ubuntu:  sudo apt-get install chafa',
+          'Fedora:         sudo dnf install chafa',
+          'Arch:           sudo pacman -S chafa',
+          `${DIM}it is packaged just about everywhere — that list is not exhaustive${RESET}`,
+        ],
   },
   {
-    name: 'Ghostty',
+    name: mac ? 'Ghostty' : 'a terminal that can draw the sprite',
     why: 'the terminal the pane opens in',
-    present: () => existsSync(GHOSTTY_APP),
+    present: terminalPresent,
     // Not in MacPorts — it is a GUI app, and the project ships its own build.
-    command: () => (manager === 'brew' ? ['brew', ['install', '--cask', 'ghostty']] : null),
-    without: [
-      'download the .dmg:  https://ghostty.org/download',
-      `${DIM}a universal build, macOS 13+, no package manager needed${RESET}`,
-    ],
+    // Nothing on Linux: see the note above terminalPresent.
+    command: () => (mac && manager === 'brew' ? ['brew', ['install', '--cask', 'ghostty']] : null),
+    without: mac
+      ? [
+          'download the .dmg:  https://ghostty.org/download',
+          `${DIM}a universal build, macOS 13+, no package manager needed${RESET}`,
+        ]
+      : [
+          'WezTerm:  https://wezterm.org/installation  — nothing to configure, and the',
+          `${DIM}          pane is sized in cells, so it is the one that just works${RESET}`,
+          'kitty:    https://sw.kovidgoyal.net/kitty/binary/  — then: npm run kitty -- --install',
+          'Ghostty:  https://ghostty.org/download  — opens the pane as its own window',
+          `${DIM}this installs none of them: they are packaged differently in every${RESET}`,
+          `${DIM}distribution, and picking one for you is not this script's call${RESET}`,
+        ],
   },
 ]
 
 say()
-
-if (process.platform !== 'darwin') {
-  say(`  ${RED}macOS only${RESET}\n`)
-  process.exit(1)
-}
 
 const missing = NEEDED.filter((item) => !item.present())
 
@@ -91,8 +141,12 @@ const unhandled = missing.filter((item) => item.command() === null)
 
 if (unhandled.length > 0) {
   if (!manager) {
-    say(`  ${YELLOW}no Homebrew or MacPorts here${RESET}${DIM} — and this will not install one for you${RESET}`)
-    say(`  ${DIM}https://brew.sh if you want one. Otherwise, per tool:${RESET}`)
+    say(
+      mac
+        ? `  ${YELLOW}no Homebrew or MacPorts here${RESET}${DIM} — and this will not install one for you${RESET}`
+        : `  ${YELLOW}no package manager this recognises${RESET}${DIM} — it knows apt, dnf, pacman, zypper and apk${RESET}`,
+    )
+    say(`  ${DIM}${mac ? 'https://brew.sh if you want one. Otherwise, per tool:' : 'per tool:'}${RESET}`)
   }
 
   for (const item of unhandled) {
@@ -144,4 +198,4 @@ if (stillMissing.length > 0) {
   process.exit(1)
 }
 
-say(`  ${GREEN}both installed.${RESET} now run: npm run setup\n`)
+say(`  ${GREEN}${mac ? 'both installed.' : 'installed.'}${RESET} now run: npm run setup\n`)

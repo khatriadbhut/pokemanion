@@ -37,6 +37,9 @@ const MODULES = [
   'shell',
   'assigned',
   'ghostty',
+  'kitty',
+  'launcher',
+  'graphics',
   'hint',
   'agents',
   'update',
@@ -677,10 +680,51 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
   const colsIn = (text) => new Set([...text.matchAll(/\bc=(\d+)/g)].map((m) => m[1]))
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+  // Warm the cache this pane is about to read, before anything is timed.
+  //
+  // Everything below is measured against the clock: the ball plays for 34
+  // frames at 40ms, and the wait is set to land just past it. That holds only
+  // when the frames are already converted. On a cold cache the pane has to
+  // write a PNG and run chafa for each of them first, the ball is still playing
+  // when the timer says it should have settled, and the check fails having
+  // found nothing wrong.
+  //
+  // Which is not hypothetical: it is what happened the moment CACHE_VERSION was
+  // bumped, and it is what a fresh clone would have hit all along. Rendering
+  // the same sprites once here costs a second and makes the timing mean what it
+  // says.
+  // Drawn as kitty, whatever this machine would have chosen.
+  //
+  // What is read back below is `c=`, the column count on a kitty *placement* —
+  // so this test is about the kitty format by construction. On a machine that
+  // picks any of the other three there are no placements to find, both sets
+  // come back empty, and it fails having compared nothing to nothing. That is
+  // what it did the first time it was run on Linux, where there is no terminal
+  // and the format guess is symbols.
+  //
+  // $TERM rather than a flag, because that is how the format is really decided
+  // and it keeps the test on the same path as everything else.
+  const asKitty = { ...process.env, TERM: 'xterm-ghostty', PIXEL_RUNNER_KEEP_PANE: '1' }
+
+  const warmPane = spawn(
+    process.execPath,
+    [join(ROOT, 'src', 'window.mjs'), '4', `--session=${session}-warm`, '--species=pikachu'],
+    { stdio: 'ignore', env: asKitty },
+  )
+
+  await pause(2500)
+  warmPane.kill()
+
+  for (const path of [join(STATE_DIR, `window-${session}-warm.species`), join(STATE_DIR, `window-${session}-warm.pid`)]) {
+    try {
+      unlinkSync(path)
+    } catch {}
+  }
+
   const pane = spawn(
     process.execPath,
     [join(ROOT, 'src', 'window.mjs'), '4', `--session=${session}`, '--species=pikachu'],
-    { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, PIXEL_RUNNER_KEEP_PANE: '1' } },
+    { stdio: ['ignore', 'pipe', 'ignore'], env: asKitty },
   )
 
   let drawn = ''
@@ -690,7 +734,7 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
     drawn += chunk
   })
 
-  // The opening ball is 37 frames at 40ms, so this is past it and settled on
+  // The opening ball is 34 frames at 40ms, so this is past it and settled on
   // the Pokemon itself.
   await pause(2200)
 
@@ -1242,6 +1286,516 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
   }
 }
 
+// Which pane a prompt is aimed at.
+//
+// The bug: a conversation forked into a background agent kept the same
+// scrollback, so it looked like the same conversation — but it had a new
+// session id, and `--random` typed at it wrote a claim into a species file no
+// pane was watching. Three rolls in a row answered "fetching it, back in a
+// moment" and the sprite on screen never moved off the one from before the
+// fork.
+//
+// The registry is Claude Code's, under ~/.claude/sessions, one file per running
+// process. Invented here rather than read, so what is tested is the rule and
+// not whatever this machine happens to be running.
+{
+  const { hostSession } = await import('./companion.mjs')
+
+  const HOST = 'host-0001'
+  const AGENT = 'agent-0001'
+  const yes = () => true
+  const no = () => false
+
+  const rows = [
+    { pid: 100, sessionId: HOST, kind: 'interactive', parkedJobId: 'job-a', updatedAt: 2 },
+    { pid: 200, sessionId: AGENT, kind: 'bg', jobId: 'job-a', updatedAt: 3 },
+    { pid: 300, sessionId: 'elsewhere-0001', kind: 'interactive', updatedAt: 9 },
+  ]
+
+  check('a parked agent aims at the window it is parked in', hostSession(AGENT, rows, yes) === HOST)
+
+  // The whole of what was asked for: that window, not some other one. The
+  // decoy is more recently updated and would win any "most recent pane" rule.
+  check('and not at some other window', hostSession(AGENT, rows, yes) !== 'elsewhere-0001')
+
+  check('an ordinary session is its own pane', hostSession(HOST, rows, yes) === HOST)
+  check('and so is one the registry has never heard of', hostSession('unknown-0001', rows, yes) === 'unknown-0001')
+
+  // A host that has exited is a window no longer on screen, and its claim would
+  // be read by nothing. Better the agent points at itself than at a file with
+  // no pane behind it.
+  check('a dead host is not written to', hostSession(AGENT, rows, no) === AGENT)
+
+  // Nobody watching it at all — a real background agent, which is the case the
+  // pane has always and deliberately refused to open for.
+  check('an agent nobody has parked stays its own', hostSession(AGENT, [rows[1], rows[2]], yes) === AGENT)
+
+  // The job is named after the session that made it, so today the two agree.
+  // Matching on `jobId` rather than on the id is what keeps this working the
+  // day they stop agreeing.
+  const misnamed = [{ pid: 100, sessionId: HOST, kind: 'interactive', parkedJobId: 'agent-00', updatedAt: 2 }, rows[1]]
+
+  check('the link is the job id, not the session id', hostSession(AGENT, misnamed, yes) === AGENT)
+}
+
+// Which terminal opens the pane.
+//
+// The rule is tested against invented machines rather than this one, which is
+// the entire reason chooseLauncher takes its platform, environment and both
+// "is it installed?" questions as arguments. A suite that could only ask about
+// the machine it runs on could check exactly one of these nine rows, and it
+// would be the row that already worked.
+{
+  const { chooseLauncher, launchCommand, paneArgv, splitBias, terminalRows } = await import('./launcher.mjs')
+
+  const all = () => true
+  const none = () => false
+  const only = (...ok) => (what) => ok.includes(what)
+
+  const at = (platform, env, exists = all, installed = all) => chooseLauncher(platform, env, exists, installed)?.name ?? null
+
+  // The one that matters most: nothing about macOS + Ghostty may change. It is
+  // the only tested setup and everybody is on it.
+  check('a Ghostty session on macOS still goes through AppleScript', at('darwin', { TERM_PROGRAM: 'ghostty' }) === 'ghostty-macos')
+
+  // And it is chosen on the app being installed, not on sitting in one —
+  // windowMode "window" opens a Ghostty of its own and never required that.
+  check('and so does one that is not sitting in a terminal at all', at('darwin', {}) === 'ghostty-macos')
+
+  // The CLI launchers sit above it in the list, so this is the guard that says
+  // why that is safe: neither variable is set in a Ghostty, so a Ghostty
+  // session falls past both to the path it always took.
+  check('a Mac with no WezTerm or kitty variables reaches Ghostty', at('darwin', { TERM: 'xterm-ghostty' }) === 'ghostty-macos')
+
+  // What the order does buy.
+  check('a Mac sitting in WezTerm splits WezTerm, not Ghostty', at('darwin', { WEZTERM_PANE: '2' }) === 'wezterm')
+  check('a Mac sitting in kitty splits kitty', at('darwin', { KITTY_LISTEN_ON: 'unix:/tmp/k' }) === 'kitty')
+
+  // Linux, which had no route at all before this.
+  check('Linux in WezTerm', at('linux', { WEZTERM_PANE: '0' }, only('wezterm'), none) === 'wezterm')
+  check('Linux in kitty', at('linux', { KITTY_LISTEN_ON: 'unix:@k' }, only('kitty'), none) === 'kitty')
+  check('Linux in Ghostty', at('linux', { TERM_PROGRAM: 'ghostty' }, only('ghostty'), none) === 'ghostty-linux')
+
+  // Recognised two ways, because either can be missing. $TERM_PROGRAM comes
+  // from shell integration, which can be switched off or lost to a shell that
+  // never sourced it — and a Linux user losing their pane silently is the
+  // failure this is guarding against.
+  check('and by its terminfo name', at('linux', { TERM: 'xterm-ghostty' }, only('ghostty'), none) === 'ghostty-linux')
+  check('but not by having the binary alone', at('linux', { TERM: 'xterm-256color' }, only('ghostty'), none) === null)
+
+  // And deliberately *not* by $GHOSTTY_RESOURCES_DIR, which was a third way
+  // until it was caught being wrong. Ghostty exports it, exported variables are
+  // inherited by every shell started from that one, and it was still set inside
+  // a Terminal.app opened afterwards. A variable that outlives the terminal that
+  // set it cannot answer "which terminal am I in".
+  check(
+    'a Ghostty variable that leaked into another terminal proves nothing',
+    at('linux', { TERM: 'xterm-256color', GHOSTTY_RESOURCES_DIR: '/usr/share/ghostty' }, only('ghostty'), none) === null,
+  )
+
+  // Both halves of a detection are required. Having the binary is not being in
+  // the terminal, and being in the terminal is not having its command line.
+  check('WezTerm installed but not being used is not chosen', at('linux', {}, only('wezterm'), none) === null)
+  check('a WezTerm pane with no wezterm binary is not chosen', at('linux', { WEZTERM_PANE: '1' }, none, none) === null)
+
+  // The kitty one is a different question from "am I in kitty", and it is the
+  // question that matters: $KITTY_WINDOW_ID is set whether or not remote
+  // control is allowed, so detecting on it would mean choosing kitty and then
+  // failing on every launch.
+  check('kitty without remote control is not chosen', at('linux', { KITTY_WINDOW_ID: '3' }, only('kitty'), none) === null)
+
+  // Nothing here at all, which is a real answer and the common one.
+  check('a Linux in GNOME Terminal gets nothing', at('linux', { TERM_PROGRAM: 'gnome-terminal' }, none, none) === null)
+  check('a Mac with no Ghostty and no CLI terminal gets nothing', at('darwin', {}, none, none) === null)
+
+  // The commands themselves. Checked as argv rather than as a string, because
+  // that is how they are handed to spawn — a quoting bug in a repo that may sit
+  // in a path with a space in it is exactly what argv is for.
+  const plan = { rows: 4, cols: 34, argv: ['node', 'window.mjs'], env: { WEZTERM_PANE: '7', KITTY_LISTEN_ON: 'unix:@k', KITTY_WINDOW_ID: '3' }, rowsAvailable: 40 }
+  const wez = chooseLauncher('linux', { WEZTERM_PANE: '7' }, only('wezterm'), none)
+  const kit = chooseLauncher('linux', { KITTY_LISTEN_ON: 'unix:@k' }, only('kitty'), none)
+  const gho = chooseLauncher('linux', { TERM_PROGRAM: 'ghostty' }, only('ghostty'), none)
+
+  const [wezProgram, wezArgs] = launchCommand(wez, 'split', plan)
+
+  // rows + 1: the sprite's rows, plus the one the prompt sits on. The same
+  // number the Ghostty window path passes as --window-height, and the reason a
+  // pane is a strip rather than half the window.
+  check('WezTerm is asked for exactly the pane height in cells', wezProgram === 'wezterm' && wezArgs.includes('--cells') && wezArgs[wezArgs.indexOf('--cells') + 1] === '5')
+
+  // Aimed at this session's pane rather than at whatever has focus. This is the
+  // thing the keystroke path cannot do, and it is why opening a pane for a
+  // background agent used to cut whichever window you were looking at in half.
+  check('and at this pane, not the focused one', wezArgs[wezArgs.indexOf('--pane-id') + 1] === '7')
+
+  // Everything after -- is the pane, untouched. A launcher that ate an argument
+  // would produce a pane with no Pokemon in it.
+  check('the pane command is passed through whole', wezArgs.slice(wezArgs.indexOf('--') + 1).join(' ') === 'node window.mjs')
+
+  const [, kitArgs] = launchCommand(kit, 'split', plan)
+
+  check('kitty is asked to split rather than stack', kitArgs.includes('--location=hsplit'))
+  check('and told which kitty to talk to', kitArgs[kitArgs.indexOf('--to') + 1] === 'unix:@k')
+  check('and which window to split beside', kitArgs.includes('--match=id:3'))
+
+  // `--match=id:` with nothing after it is not "match anything", it is a
+  // malformed match, and kitty rejects the whole launch. An unset window id has
+  // to mean no --match at all, or it turns a pane beside the wrong window into
+  // no pane whatsoever.
+  const [, kitBare] = launchCommand(kit, 'split', { ...plan, env: { KITTY_LISTEN_ON: 'unix:@k' } })
+
+  check('and never an empty match', kitBare.every((arg) => arg !== '--match=id:') && !kitBare.some((arg) => arg.startsWith('--match')))
+
+  // Ghostty on Linux can start a terminal but cannot split one — that is a
+  // keybind, and pressing it is the macOS path. Saying so here is what lets
+  // openWindow fall back to a window rather than to nothing.
+  check('Ghostty on Linux cannot split', launchCommand(gho, 'split', plan) === null)
+  check('but it can open a window', launchCommand(gho, 'window', plan)?.[0] === 'ghostty')
+
+  // AppleScript is not a command and cannot be described as one. Returning null
+  // is what makes the call site dispatch on `applescript` rather than trying to
+  // spawn a keystroke.
+  check('the AppleScript path has no command line', launchCommand(chooseLauncher('darwin', {}, none, all), 'split', plan) === null)
+
+  // kitty sizes a split as a percentage, where everything else counts cells.
+  check('a strip in a tall window is a small percentage', splitBias(4, 100) === 5)
+  check('and in a short one, a larger one', splitBias(4, 20) === 25)
+
+  // Clamped: kitty rejects a bias outside 5-95, and a four-row strip in a
+  // hundred-row window rounds to 4. A launch that fails outright is worse than
+  // a pane two rows too tall.
+  check('never below what kitty accepts', splitBias(4, 1000) === 5)
+  check('and never above it', splitBias(400, 10) === 95)
+
+  // A hook's stdout is a pipe, not a terminal, so the height has to come from
+  // somewhere else or the kitty split is sized off a guess.
+  check('the terminal height is read from the tty when there is one', terminalRows({}, { isTTY: true, rows: 51 }) === 51)
+  check('and from $LINES when there is not', terminalRows({ LINES: '44' }, { isTTY: false }) === 44)
+  check('and falls back rather than throwing', terminalRows({}, null) === 24)
+
+  // The pane invocation itself, which every launcher is handed.
+  check('a pane names its session', paneArgv({ rows: 4, session: 'abc' }).includes('--session=abc'))
+  check('and its Pokemon when there is one', paneArgv({ rows: 4, session: 'a', species: 'gengar' }).includes('--species=gengar'))
+  check('and the one it is waiting for', paneArgv({ rows: 4, session: 'a', pending: 'flygon' }).includes('--pending=flygon'))
+  check('and says neither when there is neither', paneArgv({ rows: 4, session: 'a' }).filter((arg) => arg.startsWith('--')).length === 1)
+}
+
+// How this terminal wants to be given a picture.
+//
+// The replies below are the actual bytes captured from real terminals — run
+// with a probe that wrote what came back to a file, rather than composed from
+// what the specifications say. Two of them are the reason the parsing is shaped
+// the way it is, and neither would have been guessed.
+{
+  const { readReply, guessFormat, formatFromCaps, passthroughFor, coloursFor, sixelReachesTheScreen, FORMATS } =
+    await import('./graphics.mjs')
+
+  // Captured from iTerm2 3.5. It answers the kitty query — iTerm2 implements
+  // that protocol now — so the best format for it is kitty, not its own inline
+  // image format. Worth having as a literal: the entry in guessFormat that
+  // says "iterm" is only correct for older versions, and this is the evidence
+  // for why the probe outranks it.
+  const ITERM2 = '\x1b_Gi=31;OK\x1b\\\x1b[?64;1;2;4;6;17;18;21;22;52c'
+
+  // Captured from Terminal.app, which answers a bare VT100 attribute reply and
+  // nothing else. No kitty, no sixel — and, importantly, no visible rubbish
+  // from the APC query it does not understand.
+  const TERMINAL_APP = '\x1b[?1;2c'
+
+  check('a terminal that answers the kitty query supports it', readReply(ITERM2).kitty)
+  check('and Terminal.app does not', readReply(TERMINAL_APP).kitty === false)
+
+  // The trap, and it is a real one: iTerm2's reply starts `?64;` and contains a
+  // literal 4 as a separate parameter. Searching the string for "4" says sixel
+  // on any terminal whose model number happens to contain one — 64 is xterm's.
+  check('sixel is a whole parameter, not a digit', readReply(ITERM2).sixel)
+  check('and 64 alone is not sixel', readReply('\x1b[?64;1;6c').sixel === false)
+  check('nor is 41', readReply('\x1b[?41;1;6c').sixel === false)
+  check('Terminal.app has no sixel either', readReply(TERMINAL_APP).sixel === false)
+
+  // Nothing came back at all — a terminal that answers no query. The pane must
+  // fall back rather than conclude anything.
+  check('an empty reply claims nothing', JSON.stringify(readReply('')) === JSON.stringify({ kitty: false, sixel: false }))
+
+  // The guess, for when there is no tty to ask on — which is every sprite
+  // `npm run warm` renders.
+  const guesses = [
+    [{ TERM_PROGRAM: 'ghostty' }, 'kitty'],
+    [{ TERM: 'xterm-ghostty' }, 'kitty'],
+    [{ KITTY_WINDOW_ID: '1' }, 'kitty'],
+    [{ WEZTERM_PANE: '0' }, 'kitty'],
+    [{ TERM_PROGRAM: 'iTerm.app' }, 'iterm'],
+    [{ LC_TERMINAL: 'iTerm2' }, 'iterm'],
+    [{ TERM: 'foot' }, 'sixels'],
+    [{ KONSOLE_VERSION: '220400' }, 'sixels'],
+    [{ TERM_PROGRAM: 'Apple_Terminal' }, 'symbols'],
+    [{ TERM: 'alacritty' }, 'symbols'],
+    [{ TERM: 'xterm-256color' }, 'symbols'],
+    [{}, 'symbols'],
+  ]
+
+  const wrong = guesses.filter(([env, want]) => guessFormat(env) !== want)
+
+  // Counted, so it cannot pass by looking at nothing.
+  check(`every terminal guesses a format (${guesses.length} checked)`, wrong.length === 0, wrong.map(([env]) => JSON.stringify(env)).join(', '))
+
+  // There is always an answer, which is the whole point of this file — a
+  // terminal nobody has heard of draws in blocks rather than drawing nothing.
+  check('an unknown terminal still gets a format', FORMATS.includes(guessFormat({ TERM: 'something-nobody-has-heard-of' })))
+
+  // The environment as it actually was inside a Terminal.app on the machine
+  // this was written on, copied out of the probe rather than composed here.
+  //
+  // $GHOSTTY_RESOURCES_DIR is exported by Ghostty and inherited by everything
+  // started from that shell, so it was still set in a terminal that cannot draw
+  // a single pixel — and guessing on it said kitty. The probe would have caught
+  // it in the pane, but `npm run warm` has no tty and would have rendered every
+  // sprite in the wrong format first.
+  const LEAKED = {
+    TERM_PROGRAM: 'Apple_Terminal',
+    TERM: 'xterm-256color',
+    GHOSTTY_RESOURCES_DIR: '/Applications/Ghostty.app/Contents/Resources/ghostty',
+  }
+
+  check('a leaked Ghostty variable does not make a terminal Ghostty', guessFormat(LEAKED) === 'symbols')
+  check('and the terminal itself is still recognised', guessFormat({ TERM: 'xterm-ghostty' }) === 'kitty')
+
+  // The probe outranks the guess, and this is the case that proves it matters:
+  // the environment says iTerm2 and would choose `iterm`, but the terminal
+  // itself answered the kitty query, so it gets the better format.
+  check('a probed answer beats the guess', formatFromCaps(readReply(ITERM2), { TERM_PROGRAM: 'iTerm.app' }) === 'kitty')
+
+  // And where the probe cannot help. iTerm2 answers no query about its own
+  // inline image format, so an older one that says no to both still has to be
+  // recognised from the environment rather than dropped to symbols.
+  check('an older iTerm2 keeps its own format', formatFromCaps({ kitty: false, sixel: false }, { TERM_PROGRAM: 'iTerm.app' }) === 'iterm')
+
+  check('sixel is used when it is all there is', formatFromCaps({ kitty: false, sixel: true }, { TERM: 'xterm-256color' }) === 'sixels')
+  check('and blocks when there is nothing', formatFromCaps({ kitty: false, sixel: false }, { TERM: 'xterm-256color' }) === 'symbols')
+
+  // The sixel answer that has to be checked twice, because inside tmux it is
+  // tmux answering about itself.
+  //
+  // Every tmux since 3.4 is built with sixel support and says so in DA1
+  // whatever it is attached to. Attached to Ghostty — no sixel — tmux took the
+  // image and drew `SIXEL IMAGE (33x16)` and rows of `+` instead of a Pokemon.
+  // Reproduced the same way in xterm on Linux, so it is the tmux rule and not
+  // one platform.
+  //
+  // `client_termfeatures` is tmux's own account of the terminal on the other
+  // end and does not have sixel in it for either of those. A TMUX pointing at
+  // no server stands in for that here: the question cannot be answered, and an
+  // unanswered question has to come back as no, because the failure it prevents
+  // is an empty pane.
+  const noServer = { TERM: 'xterm-256color', TMUX: '/nonexistent/pokemanion-suite,0,0' }
+
+  check('outside tmux the terminal is believed', sixelReachesTheScreen({ TERM: 'xterm-256color' }))
+  check('inside tmux an unanswerable question is a no', sixelReachesTheScreen(noServer) === false)
+  check('so a tmux that cannot show sixel gets blocks', formatFromCaps({ kitty: false, sixel: true }, noServer) === 'symbols')
+
+  // No probe ran at all — no tty, which is `npm run warm` every time.
+  check('no probe falls back to the guess', formatFromCaps(null, { TERM_PROGRAM: 'ghostty' }) === 'kitty')
+
+  // Passthrough, and the rule that testing inside a real tmux overturned.
+  //
+  // The first version turned it on whenever $TMUX was set. That is wrong: the
+  // probe asks whoever answers, inside tmux that is tmux, and tmux 3.4 and
+  // later render sixels themselves — so wrapping the frames for passthrough
+  // sends them straight past the program that was going to draw them.
+  check('a probed format inside tmux is sent plainly', passthroughFor({}, { TMUX: '/tmp/tmux-501/default,1,0' }) === 'none')
+
+  // The one case that is left, and the only reason to force the format at all:
+  // reaching the terminal behind the multiplexer.
+  check('a forced format inside tmux is wrapped', passthroughFor({ graphicsFormat: 'kitty' }, { TMUX: '/tmp/x,1,0' }) === 'tmux')
+  check('and inside screen', passthroughFor({ graphicsFormat: 'kitty' }, { TERM: 'screen', STY: '1.pts-0' }) === 'screen')
+  check('but never outside one', passthroughFor({ graphicsFormat: 'kitty' }, { TERM: 'xterm-256color' }) === 'none')
+
+  // A nonsense override is not an override.
+  check('an unknown format is ignored', passthroughFor({ graphicsFormat: 'ascii-art' }, { TMUX: '/tmp/x,1,0' }) === 'none')
+
+  // Which block characters to draw with, and both ways it can go wrong. Neither
+  // was reasoned out — both came from rendering a Pikachu in xterm on Linux and
+  // looking at the screenshot.
+  const { symbolsFor } = await import('./graphics.mjs')
+
+  // The font one, which decides the default. On a Debian with the usual
+  // packages, DejaVu Sans Mono covers half blocks and quadrants and nothing
+  // covers sextants or octants except Unifont Upper, which most systems do not
+  // install. A missing glyph is a row of tofu, which is worse than the coarser
+  // picture it was trying to improve on.
+  check('the default is the set every font has', symbolsFor({}) === 'block')
+
+  // The statusline's key is not the pane's. That one is read by build.mjs for a
+  // job where the font is this machine's own; the pane draws somewhere else.
+  check('the statusline setting does not reach the pane', symbolsFor({ chafaSymbols: 'octant' }) === 'block')
+
+  // The chafa one. Debian stable ships 1.14.5, which does not know `octant` —
+  // it exits 1, and chafa exiting is the renderer exiting, so the pane opened
+  // and died instantly.
+  check('octant is used where chafa knows it', symbolsFor({ paneSymbols: 'octant' }, [1, 18, 2]) === 'octant')
+  check('and steps down where it does not', symbolsFor({ paneSymbols: 'octant' }, [1, 14, 5]) === 'sextant')
+  check('1.16 is where it changed', symbolsFor({ paneSymbols: 'octant' }, [1, 16, 0]) === 'octant')
+  check('an unreadable version steps down too', symbolsFor({ paneSymbols: 'octant' }, null) === 'sextant')
+
+  // Anything named explicitly is honoured — someone who set it has looked at
+  // their own font, and second-guessing that is worse than letting chafa say so.
+  check('an explicit choice is passed through', symbolsFor({ paneSymbols: 'half' }, [1, 14, 5]) === 'half')
+
+  // chafa cannot work the colour depth out for itself here: its output is a
+  // pipe into the frame cache, so it sees no terminal and falls back to 16,
+  // which turns a sprite to mud. Only visible in symbols mode, where the
+  // colour is the picture.
+  check('truecolor is asked for when the terminal says so', coloursFor({ COLORTERM: 'truecolor' }) === 'full')
+  check('and 256 otherwise', coloursFor({ TERM: 'xterm-256color' }) === '256')
+  check('and never nothing', ['full', '256'].includes(coloursFor({})))
+}
+
+// Every terminal gets a pane, which is the claim this table has to keep.
+{
+  const { chooseLauncher, launchCommand, paneArgv, UNIX_TERMINALS, shellJoin } = await import('./launcher.mjs')
+
+  const all = () => true
+  const none = () => false
+  const only = (...ok) => (what) => ok.includes(what)
+  const at = (platform, env, exists = all, installed = all) => chooseLauncher(platform, env, exists, installed)?.name ?? null
+
+  // tmux is above every terminal, because inside tmux the terminal does not own
+  // the panes — tmux does. Splitting WezTerm from inside a tmux session puts a
+  // WezTerm pane next to the tmux one, outside the session, where nobody is
+  // looking.
+  check('tmux outranks the terminal it is running in', at('linux', { TMUX: '/tmp/x,1,0', WEZTERM_PANE: '2' }, all, none) === 'tmux')
+  check('and on macOS too', at('darwin', { TMUX: '/tmp/x,1,0' }, all, all) === 'tmux')
+  check('but not when tmux is not installed', at('linux', { TMUX: '/tmp/x,1,0', WEZTERM_PANE: '2' }, only('wezterm'), none) === 'wezterm')
+
+  // iTerm2 sits above ghostty-macos for the same reason WezTerm and kitty do: a
+  // pane in the terminal you are actually in beats a window belonging to a
+  // different application.
+  check('iTerm2 splits itself rather than opening Ghostty', at('darwin', { TERM_PROGRAM: 'iTerm.app' }, all, all) === 'iterm2')
+
+  // Terminal.app sits below it, and that is deliberate rather than an
+  // oversight: Terminal.app cannot draw pixels at all, so on a Mac that has
+  // Ghostty a real Ghostty pane is the better answer and is what this has
+  // always done.
+  check('Terminal.app yields to an installed Ghostty', at('darwin', { TERM_PROGRAM: 'Apple_Terminal' }, all, all) === 'ghostty-macos')
+  check('and is used when there is no Ghostty', at('darwin', { TERM_PROGRAM: 'Apple_Terminal' }, none, none) === 'terminal-app')
+
+  // The row the requirements table used to end with. There is no "no" left on
+  // Linux: something opens a window.
+  check('a Linux with only xterm still gets a pane', at('linux', { TERM: 'xterm-256color' }, only('xterm'), none) === 'unix-terminal')
+  check('and one with only Alacritty', at('linux', { TERM: 'alacritty' }, only('alacritty'), none) === 'unix-terminal')
+  check('and one with only GNOME Terminal', at('linux', { TERM: 'xterm-256color' }, only('gnome-terminal'), none) === 'unix-terminal')
+  check('a Linux with none of them gets nothing', at('linux', { TERM: 'xterm-256color' }, none, none) === null)
+
+  const plan = { rows: 4, cols: 34, argv: ['node', 'w.mjs'], env: {}, rowsAvailable: 40 }
+
+  // tmux sizes in lines, the same number every other launcher is given, and
+  // sets the option the forced-format case needs before splitting.
+  const [, tmuxArgs] = launchCommand(chooseLauncher('linux', { TMUX: '/tmp/x,1,0' }, only('tmux'), none), 'split', plan)
+
+  check('tmux is asked for the pane height in lines', tmuxArgs[tmuxArgs.indexOf('-l') + 1] === '5')
+  check('and does not steal focus', tmuxArgs.includes('-d'))
+  check('and allows passthrough first', tmuxArgs.slice(0, tmuxArgs.indexOf(';')).join(' ') === 'set -g allow-passthrough on')
+
+  // Which of six, and in what order. This machine has none of them, which is
+  // exactly why `exists` is injected.
+  const picked = (...installed) => {
+    const launcher = chooseLauncher('linux', { TERM: 'xterm-256color' }, only(...installed), none)
+
+    return launchCommand(launcher, 'window', { ...plan, exists: only(...installed) })?.[0]
+  }
+
+  check('foot wins, because it draws pixels', picked('foot', 'xterm', 'alacritty') === 'foot')
+  check('konsole next', picked('konsole', 'gnome-terminal', 'xterm') === 'konsole')
+  check('then gnome-terminal', picked('gnome-terminal', 'xterm') === 'gnome-terminal')
+  check('and xterm last', picked('xterm') === 'xterm')
+
+  // xterm takes its encoding from the locale, and a machine with no UTF-8
+  // locale runs it in 8-bit mode — where U+2580 arrives as the Latin-1 reading
+  // of its UTF-8 bytes, so the sprite is a grid of accented letters. Seen
+  // exactly that way in a container with LANG unset.
+  //
+  // `-en UTF-8` and not `-u8`: the latter is the flag that looks like it does
+  // this, is documented as obsolete, and was ignored — the mojibake survived it
+  // unchanged, which is why this checks for the one that worked.
+  const xtermArgs = UNIX_TERMINALS.find((entry) => entry.command === 'xterm').args(5, 34, ['n'])
+
+  check('xterm is told the encoding outright', xtermArgs[xtermArgs.indexOf('-en') + 1] === 'UTF-8')
+  check('and not with the flag that is ignored', !xtermArgs.includes('-u8'))
+
+  // Right bytes, wrong glyphs. `-en` fixed the encoding and the sprite was
+  // still a grid of hollow boxes, because xterm defaults to the X core bitmap
+  // fonts and those have no block elements — not the fine ones, any of them,
+  // U+2588 included. Installing DejaVu does nothing: xterm has to be told to
+  // use Xft before fontconfig is consulted at all.
+  //
+  // `monospace` and not a family name, because it is the generic that resolves
+  // to whatever the machine has rather than to something only Debian ships.
+  check('xterm is moved off its bitmap font', xtermArgs[xtermArgs.indexOf('-fa') + 1] === 'monospace')
+
+  // And given a size, because xterm's default Xft size leaves a gap between
+  // adjacent cells — invisible in text, a vertical seam down every column of a
+  // sprite made of blocks.
+  check('and given a size, so the blocks meet', Number(xtermArgs[xtermArgs.indexOf('-fs') + 1]) > 0)
+
+  // gnome-terminal deprecated -e and mangles anything passed that way, so the
+  // separator is not the same in all six and getting it wrong opens a window
+  // that runs the wrong thing.
+  const gnome = UNIX_TERMINALS.find((entry) => entry.command === 'gnome-terminal').args(5, 34, ['node', 'w.mjs'])
+
+  check('gnome-terminal takes its command after --', gnome[gnome.indexOf('--') + 1] === 'node')
+  check('and is told its geometry', gnome.includes('--geometry=34x5'))
+
+  // The AppleScript launchers are handed a string to type rather than a list to
+  // exec, so the quoting is theirs to get right — and this repo can sit at
+  // ~/Documents/My Projects/pokemanion, where unquoted is two arguments and a
+  // pane that never starts.
+  check('a path with a space survives quoting', shellJoin(['/My Projects/node', 'a.mjs']) === `'/My Projects/node' a.mjs`)
+  check('and one with a quote in it', shellJoin([`it's`]) === `'it'\\''s'`)
+  check('and a plain argument is left alone', shellJoin(['--session=abc', 'node']) === '--session=abc node')
+
+  // iTerm2 splits and then sizes, because an iTerm2 split is 50/50 and a
+  // half-window sprite is the layout bug this project already fixed once for
+  // Ghostty.
+  const [itermProgram, itermArgs] = launchCommand(chooseLauncher('darwin', { TERM_PROGRAM: 'iTerm.app' }, all, all), 'split', plan)
+
+  check('iTerm2 is driven by osascript', itermProgram === 'osascript')
+  check('and is told to split', itermArgs.join(' ').includes('split horizontally'))
+  check('and then to be a strip', itermArgs.join(' ').includes('set rows to 5'))
+}
+
+// The two kitty settings, and the rule about not overruling a setting someone
+// has already made.
+{
+  const { alreadySet, snippet: kittySnippet } = await import('./kitty.mjs')
+
+  check('a fresh config needs both', JSON.stringify(alreadySet('')) === JSON.stringify({ remote: false, splits: false }))
+
+  check(
+    'ours satisfies both',
+    (() => {
+      const set = alreadySet(kittySnippet())
+
+      return set.remote && set.splits
+    })(),
+  )
+
+  // Matched loosely on purpose. Both settings have forms that are not the
+  // string we would write, and writing a second declaration underneath one
+  // someone has made by hand would silently overrule it — kitty takes the last.
+  check('socket-only counts as remote control', alreadySet('allow_remote_control socket-only').remote)
+  check('and so does password', alreadySet('allow_remote_control password').remote)
+  check('but no is not remote control', alreadySet('allow_remote_control no').remote === false)
+
+  check('splits anywhere in the list counts', alreadySet('enabled_layouts tall,splits,stack').splits)
+  check('and the wildcard counts, since it includes splits', alreadySet('enabled_layouts *').splits)
+  check('a list without splits does not', alreadySet('enabled_layouts tall,stack').splits === false)
+
+  // Indented and commented forms, which is how these actually appear in a
+  // config file someone has been editing.
+  check('leading whitespace is tolerated', alreadySet('   allow_remote_control yes').remote)
+  check('a commented-out setting is not set', alreadySet('# allow_remote_control yes').remote === false)
+}
+
 // The three files that run their work the moment they are loaded.
 //
 // `MODULES` above cannot reach any of them: importing one would perform its job
@@ -1434,9 +1988,19 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
       const first = say('an ordinary question')
       const second = say('an ordinary question')
 
+      // Matched on the part of the message that is the same everywhere.
+      //
+      // This looked for the word "Accessibility", which was fine while the
+      // message always named the macOS permission. It does not any more — that
+      // step is printed only for the Ghostty path, because telling a Linux user
+      // to open System Settings is the most confusing thing this can say. The
+      // check then failed on Linux while the behaviour it is actually about,
+      // once and then never, was perfectly correct.
+      const greeting = /pokemanion is installed/
+
       check(
         'the plugin hello blocks one prompt and then never again',
-        first.status === 2 && /Accessibility/.test(first.stderr) && second.status === 0 && !/Accessibility/.test(second.stderr),
+        first.status === 2 && greeting.test(first.stderr) && second.status === 0 && !greeting.test(second.stderr),
         `first exit ${first.status}, second exit ${second.status}`,
       )
 
@@ -1944,6 +2508,14 @@ try {
 const assets = readdirSync(join(ROOT, 'assets')).filter((file) => /\.(gif|png)$/.test(file))
 
 check('assets present', assets.length > 0, `${assets.length} files`)
+
+// --names lists every check that ran, so two runs can be diffed when the total
+// moves. A count that changes between runs is a check that is conditional on
+// something, and finding out which one meant adding this anyway.
+if (process.argv.includes('--names')) {
+  for (const result of results) console.log(result.name)
+  process.exit(0)
+}
 
 const failed = results.filter((result) => !result.ok)
 

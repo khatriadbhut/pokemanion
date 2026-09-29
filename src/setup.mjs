@@ -22,6 +22,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { ROOT } from './config.mjs'
 import { AGENTS, chosen, isStale } from './agents.mjs'
+import { chooseLauncher } from './launcher.mjs'
+import { rcFile } from './shell.mjs'
 import { ROSTER } from './roster.mjs'
 
 const DIM = '[2m'
@@ -38,8 +40,29 @@ const say = (line = '') => console.log(line)
 const blockers = []
 const warnings = []
 
-if (process.platform !== 'darwin') {
-  blockers.push(['this is macOS only', 'the pane is opened by driving Ghostty through AppleScript'])
+// Which terminal will be asked to open the pane, decided once so every message
+// below can name it.
+//
+// This used to be a blocker reading `process.platform !== 'darwin'`, and it was
+// honest at the time: the pane was a Ghostty split, a split was a keystroke, and
+// the keystroke was AppleScript. It is not true any more — WezTerm and kitty are
+// driven by a command line that is the same on both platforms — so the question
+// stopped being which operating system this is and became which terminal you
+// are sitting in.
+//
+// A warning rather than a blocker, and deliberately. Everything else setup does
+// is worth doing without a pane: the sprites are downloaded and rendered, the
+// hooks are registered, the wrapper is written. Someone installing over SSH, or
+// in a terminal this cannot drive today, gets a working install and a sentence
+// about the one part that will not run — rather than being turned away at the
+// door with nothing.
+const launcher = chooseLauncher()
+
+if (!launcher) {
+  warnings.push([
+    `no terminal here that the pane can be opened in${process.env.TERM_PROGRAM ? ` — this is ${process.env.TERM_PROGRAM}` : ''}`,
+    'run the pane by hand instead: npm run window 4 --session=<id>. everything else here still installs',
+  ])
 }
 
 // package.json says node >= 20, but `engines` is advice npm does not enforce
@@ -64,7 +87,11 @@ if (spawnSync('chafa', ['--version'], { encoding: 'utf8' }).status !== 0) {
 
 // Not a blocker: everything installs fine without it, and the pane can be run
 // by hand. It is only the automatic split that needs the app itself.
-if (!existsSync('/Applications/Ghostty.app')) {
+//
+// Only worth saying on a Mac with no other terminal to fall back to. Told to
+// install Ghostty while sitting in the WezTerm that is about to open the pane
+// perfectly well is advice that makes someone doubt a working install.
+if (process.platform === 'darwin' && !launcher && !existsSync('/Applications/Ghostty.app')) {
   warnings.push(['Ghostty is not in /Applications', 'the sprite needs it — https://ghostty.org'])
 }
 
@@ -124,10 +151,22 @@ const steps = [
   ['rendering them for your pane', ['src/warm.mjs'], 'once, so a session starts instantly'],
   ['registering the hooks', ['install.mjs'], `into ${agents.map((agent) => `~/.${agent.name}`).join(' and ')}`],
   [`adding the ${agents.map((agent) => `${agent.name}()`).join(' and ')} wrapper`, ['src/shell.mjs', '--install'], 'for the launch flags'],
-  // Without this the pane still opens — at half the window height, because the
-  // keystroke that collapses it is bound to nothing. That read as a layout bug
-  // for anyone but the one machine where the keybind had been added by hand.
-  ['setting the Ghostty resize keybind', ['src/ghostty.mjs', '--install'], 'so the pane is a strip, not half the window'],
+  // Both of these configure the terminal that will open the pane, so only the
+  // one that applies is run. Writing a Ghostty keybind on a machine whose pane
+  // comes from kitty is editing a config file for no reason, which is the sort
+  // of thing an install should not do.
+  //
+  // Without the Ghostty one the pane still opens — at half the window height,
+  // because the keystroke that collapses it is bound to nothing. That read as a
+  // layout bug for anyone but the one machine where the keybind had been added
+  // by hand. Without the kitty one the pane does not open at all: `kitty @` is
+  // a request over a socket kitty is not listening on until told to.
+  ...(launcher?.name === 'ghostty-macos'
+    ? [['setting the Ghostty resize keybind', ['src/ghostty.mjs', '--install'], 'so the pane is a strip, not half the window']]
+    : []),
+  ...(launcher?.name === 'kitty'
+    ? [['setting the kitty options the pane needs', ['src/kitty.mjs', '--install'], 'remote control, and the splits layout']]
+    : []),
   // The plugin ships this to both agents; a clone has the same file and no way
   // to offer it, so it is linked into ~/.claude/skills here.
   ['teaching your agent to add characters', ['src/skill.mjs', '--install'], 'the skill the plugin ships'],
@@ -166,20 +205,51 @@ for (const [label, args, why] of steps) {
 }
 
 say()
-say(`  ${GREEN}installed.${RESET} three things left, and none of them is optional:`)
-say()
-const restart = `restart ${agents.map((agent) => agent.label).join(" and ")}`
-const column = Math.max(restart.length, 'restart Ghostty'.length, 'open a new terminal'.length) + 4
-const pad = (text) => text + " ".repeat(Math.max(1, column - text.length))
 
-say(`    ${BOLD}1.${RESET} ${pad(restart)}${DIM}hooks are read at startup${RESET}`)
-say(`    ${BOLD}2.${RESET} ${pad("restart Ghostty")}${DIM}it reads its config at startup${RESET}`)
-say(`    ${BOLD}3.${RESET} ${pad("open a new terminal")}${DIM}or: source ~/.zshrc${RESET}`)
+// What is left to do by hand, which depends on which terminal is going to open
+// the pane.
+//
+// This was three fixed lines ending in a paragraph about macOS Accessibility.
+// That paragraph is the single most confusing thing this script can print to
+// someone on Linux — it names a System Settings pane they do not have, for a
+// permission their pane does not need, and reads as "this did not work". The
+// keystroke it is about belongs to the Ghostty path and to nothing else.
+const needsRestart = launcher?.name === 'ghostty-macos' ? 'Ghostty' : launcher?.name === 'kitty' ? 'kitty' : null
+
+const remaining = [
+  [`restart ${agents.map((agent) => agent.label).join(' and ')}`, 'hooks are read at startup'],
+  ...(needsRestart ? [[`restart ${needsRestart}`, 'it reads its config at startup']] : []),
+  ['open a new terminal', `or: source ${rcFile()}`],
+]
+
+say(`  ${GREEN}installed.${RESET} ${remaining.length === 3 ? 'three' : 'two'} things left, and none of them is optional:`)
 say()
-say(`  ${DIM}and once, by hand: System Settings > Privacy & Security > Accessibility${RESET}`)
-say(`  ${DIM}> enable Ghostty. Opening a split means pressing keys, and macOS will${RESET}`)
-say(`  ${DIM}not let anything press keys until you allow it.${RESET}`)
+
+const column = Math.max(...remaining.map(([what]) => what.length)) + 4
+const pad = (text) => text + ' '.repeat(Math.max(1, column - text.length))
+
+remaining.forEach(([what, why], index) => {
+  say(`    ${BOLD}${index + 1}.${RESET} ${pad(what)}${DIM}${why}${RESET}`)
+})
+
 say()
+
+// The permission, and only where there is one. It is the price of opening a
+// split by pressing the key that splits it, which is the macOS Ghostty path
+// alone — the others hand the request to the terminal over its own socket, and
+// macOS has no opinion about that.
+if (launcher?.name === 'ghostty-macos') {
+  say(`  ${DIM}and once, by hand: System Settings > Privacy & Security > Accessibility${RESET}`)
+  say(`  ${DIM}> enable Ghostty. Opening a split means pressing keys, and macOS will${RESET}`)
+  say(`  ${DIM}not let anything press keys until you allow it.${RESET}`)
+  say()
+} else if (!launcher) {
+  say(`  ${YELLOW}there is still no terminal here that can open the pane for you.${RESET}`)
+  say(`  ${DIM}run it yourself in a second terminal that speaks the kitty graphics${RESET}`)
+  say(`  ${DIM}protocol:${RESET} npm run window 4 --session=<id>`)
+  say()
+}
+
 say(`  ${DIM}then a Pokemon appears beside your next session. it rests while the${RESET}`)
 say(`  ${DIM}agent waits and animates while it works.${RESET}`)
 say()
