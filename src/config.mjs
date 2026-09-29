@@ -62,7 +62,7 @@ export const DEFAULTS = {
   // shape of a monospace cell, and it is why the half block ▀ works: it splits
   // the cell into two squares. A terminal set up with extra line spacing has
   // taller cells, and then those halves are not square any more and the sprite
-  // comes out stretched. `npm run cellcheck` measures yours.
+  // comes out stretched. `node src/cellcheck.mjs` measures yours.
   cellAspect: 2,
 
   // How an output pixel is chosen from the source block behind it.
@@ -88,7 +88,7 @@ export const DEFAULTS = {
   //   braille - 8 px  (2x4). The most detail, in every font, but the dots do
   //             not fill the cell so it reads as dot matrix, one colour a cell.
   //
-  // `npm run fontcheck` shows whether your font has each of them.
+  // `node src/fontcheck.mjs` shows whether your font has each of them.
   style: 'half',
 
   // Snap to a whole-number reduction from the source. A fractional reduction

@@ -35,9 +35,17 @@ Primary Device Attributes request together and reading the reply:
 | format | who gets it | note |
 | --- | --- | --- |
 | `kitty` | Ghostty, kitty, WezTerm, iTerm2 3.5+ | a frame is sent once and then referred to by id — 0.02MB against 35.9MB for four hundred draws |
-| `sixels` | tmux 3.4+, foot, Konsole, xterm with sixel | one image per frame |
+| `sixels` | foot, Konsole, xterm with sixel, and tmux **only when the terminal it is attached to has sixel** | one image per frame |
 | `iterm` | older iTerm2 | one image per frame |
 | `symbols` | **everything else** | octants in truecolor, not pixels. What Terminal.app, Alacritty and GNOME Terminal draw instead of nothing |
+
+**Inside tmux the reply is tmux's, not the terminal's.** Every tmux since 3.4 is
+built with sixel support and says so in DA1 regardless of what it is attached
+to, so the probe's answer has to be checked against `client_termfeatures` —
+tmux's own account of the terminal on the other end. Believing DA1 alone left
+the pane showing the literal text `SIXEL IMAGE (33x16)` and rows of `+` in
+Ghostty, which is the setup everything else here is tested against. Unknown
+counts as no: blocks are a Pokémon, an undeliverable sixel is nothing.
 
 The probe needs a tty, so the pane does it and writes the answer down; `npm run
 warm` and `npm run doctor` read that rather than asking again. With no tty and

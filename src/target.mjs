@@ -1,8 +1,8 @@
 // Two terminals, two very different ceilings — so switch between them in one
 // command instead of hand-editing four settings.
 //
-//   npm run for-ghostty    octants, 8 pixels a cell, sprite at 1:1
-//   npm run for-terminal   half blocks, 2 a cell, works in Terminal.app
+//   node src/target.mjs ghostty    octants, 8 pixels a cell, sprite at 1:1
+//   node src/target.mjs terminal   half blocks, 2 a cell, works in Terminal.app
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -54,7 +54,7 @@ const [name] = process.argv.slice(2)
 const target = TARGETS[name]
 
 if (!target) {
-  console.log('\n  npm run for-ghostty    or    npm run for-terminal\n')
+  console.log('\n  node src/target.mjs ghostty    or    node src/target.mjs terminal\n')
   process.exit(1)
 }
 

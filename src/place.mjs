@@ -80,10 +80,20 @@ const describe = (frame) => {
 // Worked out once per sprite, on first use rather than at load, so nothing is
 // paid for a sprite that is never drawn — the Pokedex loads sprites to measure
 // them, and the pane loads a busy one that may not play for minutes.
+//
+// Identical frames share one picture. A GIF holds a pose by repeating the frame,
+// and each copy used to get its own id — so the Pokeball's first rock sent the
+// same three pictures eleven times over, at 40ms a frame, and stuttered doing it.
 const artFor = (sprite) => {
   if (!sprite.art) {
+    const seen = new Map()
+
     sprite.art = {
-      frames: sprite.frames.map(describe),
+      frames: sprite.frames.map((frame) => {
+        if (!seen.has(frame)) seen.set(frame, describe(frame))
+
+        return seen.get(frame)
+      }),
       ghost: sprite.ghost ? describe(sprite.ghost) : null,
     }
   }

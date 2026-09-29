@@ -109,6 +109,23 @@ pokemanion from the tab that appears.
 </tr>
 </table>
 
+Then, in Claude Code, `/reload-plugins` — or restart Codex — and type:
+
+```
+--charizard       switch the pane to any of the 1258, live
+--random          roll one
+--dex current     what is on screen, answered in the pane
+```
+
+**macOS + Ghostty only:** allow Ghostty in System Settings → Privacy & Security
+→ Accessibility. Opening a split there means pressing keys, and without this no
+pane appears at all. tmux, WezTerm, kitty and the rest need no permission.
+
+<details>
+<summary><b>More on installing</b> — Codex from a shell, restarting the terminal, scopes</summary>
+
+<br>
+
 Codex's is a browser, not a command that takes arguments — there is no
 `/plugin`, singular. If you would rather type it, the same thing from a shell,
 before you start Codex:
@@ -121,22 +138,9 @@ codex plugin add pokemanion@pokemanion
 Nothing to clone or build; the agent fetches the project itself and the sprites
 ship with it.
 
-Installing does not switch it on by itself. In Claude Code, `/reload-plugins`
-does that without restarting anything. Then type `--pikachu` and a Pokemon
-appears. In Codex, restart it.
-
-Two more, and neither is optional:
-
-- **Allow Ghostty in Accessibility** — System Settings → Privacy & Security →
-  Accessibility. **macOS + Ghostty only**: opening a split there means pressing
-  the key that splits it, and macOS blocks that until allowed. Every other
-  terminal is asked over its own socket or scripting interface, and tmux,
-  WezTerm and the rest need no permission at all.
-  Skip it and everything installs perfectly and no pane ever
-  appears.
-- **Restart your terminal** if it is Ghostty or kitty, which read their
-  configuration at startup and have just had a line written to it. And **open a
-  new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
+**Restart your terminal** if it is Ghostty or kitty, which read their
+configuration at startup and have just had a line written to it. And **open a
+new terminal** — or `source ~/.zshrc` — which picks up `claude --pikachu`.
 
 In Claude Code, install it in the menu rather than by typing the command, if you
 are offered the choice: `/plugin` on its own lets you pick **user** scope, which
@@ -145,6 +149,8 @@ there and nowhere else, with nothing to say why.
 
 Already have it from source? Installing the plugin too is harmless. It stands
 aside instead of doubling up, and tells you how to switch.
+
+</details>
 
 ---
 
@@ -197,7 +203,7 @@ terminal can do.
 | you are in | the pane is | the sprite is drawn as |
 | --- | --- | :---: |
 | **Ghostty on macOS** — the setup everything is tested against | a split | pixels |
-| **tmux**, in any terminal | a split | pixels¹ |
+| **tmux**, in any terminal | a split | pixels or blocks¹ |
 | **WezTerm** · **kitty**² · **iTerm2** | a split | pixels |
 | **Ghostty on Linux** · **Terminal.app** | its own strip window | pixels · blocks |
 | foot · konsole · gnome-terminal · xfce4-terminal · alacritty · xterm | its own strip window | pixels or blocks |
@@ -212,8 +218,12 @@ what Terminal.app and Alacritty draw instead of the nothing they drew before.
 answered and what it will get. `npm run doctor` names the launcher it would use
 and the command it would run.
 
-¹ tmux 3.4 and later render sixels themselves. Older ones get blocks, which is
-still a Pokémon.
+¹ Inside tmux it depends on the terminal tmux is *attached* to, not on tmux.
+tmux 3.4 and later can carry sixels, but only as far as a terminal that can show
+them — WezTerm, foot, Konsole. Attached to one that cannot, which includes
+Ghostty and Terminal.app, the sprite is drawn in blocks. Asking tmux for sixels
+it cannot deliver used to leave the pane showing `SIXEL IMAGE (33x16)` and rows
+of `+`, and that is what the second half of this row is now for.
 
 ² kitty needs `npm run kitty -- --install` — remote control and the splits
 layout — then a restart. iTerm2 asks for Automation permission once.
@@ -371,7 +381,7 @@ Guests are limited by `guestBudgetMb` (200) and `guestKeepDays` (14).
 | `workingTimeoutMs` | `120000` | how long after the last hook we still count as working |
 | `transitions` | `true` | animate the change between the two sprites |
 | `pokeball` | `true` | open a Pokéball when one arrives |
-| `cardMs` | `8000` | how long the stats stay beside the sprite; `0` disables |
+| `cardMs` | `4000` | how long the stats stay beside the sprite; `0` disables |
 | `guestBudgetMb` | `200` | disk the guests may hold |
 | `updateCheck` | `true` | look for a newer version once a day, and say so once |
 | `showVersion` | `true` | the version along the pane's bottom edge |

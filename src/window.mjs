@@ -380,19 +380,27 @@ try {
 //   63-66  still open, beginning to settle
 //   70+    shut again
 //
-// One window, used three ways. It opens on eleven frames of rocking (30-40) and
-// then bursts (41-66), which is exactly the two things a wait is made of, so the
-// halves are taken as slices of this rather than loaded as sprites of their own.
+// The file's rock is not one rock. 4-16 is a slow, lopsided sway; 17-24 is an
+// even one — left, centre, right, centre, two frames apiece; and 25-40 is the
+// frantic finish, a new pose every 40ms that jumps straight from one side to
+// the other. The wait used to loop 30-40, that last part, which is why it read
+// as lag rather than rocking: eleven frames of twitching, looped, with a seam
+// where the order broke.
 //
-// Not just to save the chafa run, though it saves that too — a pane that had to
-// render its own wait sprite would stall for a couple of seconds at the moment
-// somebody is standing there waiting. The reason is that `sharedBounds` measures
-// whatever frames it is given, so a separately loaded rock would be sized
-// against a box with no open lid in it, and the ball would visibly jump bigger
-// the instant it started to open. Sharing one box is what makes the wait and the
-// opening a single continuous animation rather than two that meet.
-const BALL_ARRIVING = [30, 67]
-const ROCK_FRAMES = 11
+// So the wait is 17-24 and loops cleanly, ending on the centre it starts
+// beside. The burst is 41-66, which picks up from that centre as naturally as
+// from any other frame, and the frantic part in between is not loaded at all.
+//
+// Both come from one sprite rather than two. `sharedBounds` measures whatever
+// frames it is given, so a separately loaded rock would be sized against a box
+// with no open lid in it, and the ball would visibly jump bigger the instant it
+// started to open. Sharing one box is what makes the wait and the opening a
+// single continuous animation rather than two that meet.
+const BALL_ARRIVING = [
+  [17, 25],
+  [41, 67],
+]
+const ROCK_FRAMES = 8
 
 const ball = (() => {
   if (config.pokeball === false) return null
@@ -457,7 +465,8 @@ const framesOf = (sprite) =>
     ? sprite.frames.map((_, index) => ({ at: index, sprite, delay: Math.max(MIN_DELAY, sprite.delays[index]) }))
     : []
 
-const ballFrames = () => framesOf(ball)
+// One rock and then the burst, which is what an arrival is.
+const ballFrames = () => [...framesOf(rocking), ...framesOf(opening)]
 
 // Only the burst. For a pane that has been rocking: the wait ends on the frame
 // this begins on, so the ball simply carries on and opens.
@@ -938,7 +947,7 @@ const showCard = (name) => {
 
   try {
     cardLines = paneCard(dexEntry(name), paneRows)
-    cardUntil = Date.now() + (config.cardMs ?? 8000)
+    cardUntil = Date.now() + (config.cardMs ?? 4000)
   } catch {}
 }
 
@@ -955,7 +964,7 @@ const checkCard = () => {
     return
   }
 
-  cardUntil = Date.now() + (config.cardMs ?? 8000)
+  cardUntil = Date.now() + (config.cardMs ?? 4000)
   clearPane()
 }
 
@@ -1156,16 +1165,17 @@ tick()
 // cache directory and can delete a few hundred megabytes; doing it on the way
 // in would show an empty pane while it worked. A session opening is also the
 // only moment a guest can have become stale since the last one.
-setTimeout(async () => {
-  // Not under test. Pruning walks the whole cache — hundreds of megabytes — and
-  // it is synchronous, so the suite spent fourteen seconds waiting for a pane it
-  // only needed four seconds of.
+setTimeout(() => {
+  // Not under test. The suite would be deleting cache entries out from under
+  // the panes it is timing.
   if (process.env.PIXEL_RUNNER_KEEP_PANE === '1') return
 
+  // In a process of its own, never this one. Synchronous means the frame loop
+  // waits for it, and it used to run here: the Pokemon that had just come out
+  // of the ball stood frozen beside its stats for as long as the walk took,
+  // which was 29 seconds on a 1.4GB cache.
   try {
-    const { prune } = await import('./prune.mjs')
-
-    prune()
+    spawn(process.execPath, [join(ROOT, 'src', 'prune.mjs')], { detached: true, stdio: 'ignore' }).unref()
   } catch {}
 }, 2000)
 

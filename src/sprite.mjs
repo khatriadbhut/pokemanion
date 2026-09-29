@@ -161,7 +161,12 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
   // A window of frames, for an animation that is longer than the moment it is
   // wanted for. `sliceSheet` cannot do this — it only takes apart a single
   // image laid out as a grid, and returns a real GIF untouched.
-  const image = range ? { ...whole, frames: whole.frames.slice(range[0], range[1]) } : whole
+  //
+  // Either one window, `[from, to]`, or several played back to back,
+  // `[[from, to], [from, to]]` — for when the part worth keeping is in two
+  // places and the frames between them are not wanted at all.
+  const windows = !range ? null : Array.isArray(range[0]) ? range : [range]
+  const image = windows ? { ...whole, frames: windows.flatMap(([from, to]) => whole.frames.slice(from, to)) } : whole
 
   // Crop to the sprite itself. A frame is mostly empty — the overworld one is
   // 17x18 of artwork centred in 32x32 — and drawing the padding would waste
@@ -274,7 +279,20 @@ export const loadSprite = (name, label, cellRows, sheetFrames, flip = false, ran
 
   // Each frame is converted once, up front. Re-running chafa every frame would
   // spend more time launching processes than drawing.
-  const frames = image.frames.map(({ pixels }, index) => toFrame(crop(pixels), index))
+  //
+  // And a pose is converted once, however many frames hold it. GIFs hold a pose
+  // by repeating the frame — the Pokeball's rock is three pictures across
+  // eight frames — and a chafa run apiece was most of what a cold ball cost.
+  const converted = new Map()
+
+  const frames = image.frames.map(({ pixels }, index) => {
+    const cropped = crop(pixels)
+    const key = createHash('sha1').update(cropped).digest('hex')
+
+    if (!converted.has(key)) converted.set(key, toFrame(cropped, index))
+
+    return converted.get(key)
+  })
 
   // The pose the flicker trades against. Taken from the first frame, which is
   // the one the sprite is switched to anyway.

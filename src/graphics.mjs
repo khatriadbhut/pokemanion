@@ -190,6 +190,53 @@ export const guessFormat = (env = process.env) => {
   return 'symbols'
 }
 
+// Whether a sixel written here would actually reach a screen.
+//
+// Outside tmux, DA1 is answered by the terminal, so `caps.sixel` is the
+// terminal's own answer and there is nothing to second-guess.
+//
+// Inside tmux it is answered by *tmux*, and tmux reports what tmux was built
+// with rather than what the terminal on the other end can show. Every tmux
+// since 3.4 is built with sixel support, so the reply says sixel no matter what
+// it is attached to — and the pane believed it. Attached to Ghostty or
+// Terminal.app or xterm, none of which have sixel, tmux received an image it
+// could not pass on and drew its placeholder instead: the literal text
+// `SIXEL IMAGE (33x16)` and rows of `+` where the Pokemon should be. Seen in
+// Ghostty, which is the setup everything else here is tested against.
+//
+// tmux knows the difference and will say so. `client_termfeatures` is its own
+// account of what the attached terminal can do, and `sixel` appears in it only
+// when the terminal really has it — absent for Ghostty and Terminal.app,
+// present for WezTerm and foot.
+//
+// Unknown counts as no. The cost of guessing wrong in that direction is blocks
+// instead of pixels; the cost in the other direction is no sprite at all.
+export const sixelReachesTheScreen = (env = process.env) => {
+  if (!env.TMUX) return true
+
+  try {
+    // `env` is passed through rather than left to default, so that asking about
+    // a given environment asks tmux about *that* one — the suite hands it a
+    // TMUX that points at no server and gets the same answer every time,
+    // including when the suite itself is being run inside tmux.
+    const asked = spawnSync('tmux', ['display', '-p', '#{client_termfeatures}'], {
+      encoding: 'utf8',
+      timeout: 1000,
+      env,
+    })
+
+    if (asked.status !== 0 || typeof asked.stdout !== 'string') return false
+
+    return asked.stdout
+      .trim()
+      .split(',')
+      .map((feature) => feature.trim())
+      .includes('sixel')
+  } catch {
+    return false
+  }
+}
+
 // The probe's answer, as a format.
 export const formatFromCaps = (caps, env = process.env) => {
   if (!caps) return guessFormat(env)
@@ -203,7 +250,7 @@ export const formatFromCaps = (caps, env = process.env) => {
 
   if (guess === 'iterm') return 'iterm'
 
-  if (caps.sixel) return 'sixels'
+  if (caps.sixel && sixelReachesTheScreen(env)) return 'sixels'
 
   return 'symbols'
 }

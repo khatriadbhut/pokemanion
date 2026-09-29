@@ -682,7 +682,7 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
 
   // Warm the cache this pane is about to read, before anything is timed.
   //
-  // Everything below is measured against the clock: the ball plays for 37
+  // Everything below is measured against the clock: the ball plays for 34
   // frames at 40ms, and the wait is set to land just past it. That holds only
   // when the frames are already converted. On a cold cache the pane has to
   // write a PNG and run chafa for each of them first, the ball is still playing
@@ -734,7 +734,7 @@ const cardWidth = (paneDefaults.windowCols ?? 34) - (ASH_COLS + CARD_GAP) + 1
     drawn += chunk
   })
 
-  // The opening ball is 37 frames at 40ms, so this is past it and settled on
+  // The opening ball is 34 frames at 40ms, so this is past it and settled on
   // the Pokemon itself.
   await pause(2200)
 
@@ -1487,7 +1487,8 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
 // what the specifications say. Two of them are the reason the parsing is shaped
 // the way it is, and neither would have been guessed.
 {
-  const { readReply, guessFormat, formatFromCaps, passthroughFor, coloursFor, FORMATS } = await import('./graphics.mjs')
+  const { readReply, guessFormat, formatFromCaps, passthroughFor, coloursFor, sixelReachesTheScreen, FORMATS } =
+    await import('./graphics.mjs')
 
   // Captured from iTerm2 3.5. It answers the kitty query — iTerm2 implements
   // that protocol now — so the best format for it is kitty, not its own inline
@@ -1571,6 +1572,26 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
 
   check('sixel is used when it is all there is', formatFromCaps({ kitty: false, sixel: true }, { TERM: 'xterm-256color' }) === 'sixels')
   check('and blocks when there is nothing', formatFromCaps({ kitty: false, sixel: false }, { TERM: 'xterm-256color' }) === 'symbols')
+
+  // The sixel answer that has to be checked twice, because inside tmux it is
+  // tmux answering about itself.
+  //
+  // Every tmux since 3.4 is built with sixel support and says so in DA1
+  // whatever it is attached to. Attached to Ghostty — no sixel — tmux took the
+  // image and drew `SIXEL IMAGE (33x16)` and rows of `+` instead of a Pokemon.
+  // Reproduced the same way in xterm on Linux, so it is the tmux rule and not
+  // one platform.
+  //
+  // `client_termfeatures` is tmux's own account of the terminal on the other
+  // end and does not have sixel in it for either of those. A TMUX pointing at
+  // no server stands in for that here: the question cannot be answered, and an
+  // unanswered question has to come back as no, because the failure it prevents
+  // is an empty pane.
+  const noServer = { TERM: 'xterm-256color', TMUX: '/nonexistent/pokemanion-suite,0,0' }
+
+  check('outside tmux the terminal is believed', sixelReachesTheScreen({ TERM: 'xterm-256color' }))
+  check('inside tmux an unanswerable question is a no', sixelReachesTheScreen(noServer) === false)
+  check('so a tmux that cannot show sixel gets blocks', formatFromCaps({ kitty: false, sixel: true }, noServer) === 'symbols')
 
   // No probe ran at all — no tty, which is `npm run warm` every time.
   check('no probe falls back to the guess', formatFromCaps(null, { TERM_PROGRAM: 'ghostty' }) === 'kitty')
@@ -1700,6 +1721,21 @@ check('a sentence is left alone', parse('what does --pikachu do?') === null)
 
   check('xterm is told the encoding outright', xtermArgs[xtermArgs.indexOf('-en') + 1] === 'UTF-8')
   check('and not with the flag that is ignored', !xtermArgs.includes('-u8'))
+
+  // Right bytes, wrong glyphs. `-en` fixed the encoding and the sprite was
+  // still a grid of hollow boxes, because xterm defaults to the X core bitmap
+  // fonts and those have no block elements — not the fine ones, any of them,
+  // U+2588 included. Installing DejaVu does nothing: xterm has to be told to
+  // use Xft before fontconfig is consulted at all.
+  //
+  // `monospace` and not a family name, because it is the generic that resolves
+  // to whatever the machine has rather than to something only Debian ships.
+  check('xterm is moved off its bitmap font', xtermArgs[xtermArgs.indexOf('-fa') + 1] === 'monospace')
+
+  // And given a size, because xterm's default Xft size leaves a gap between
+  // adjacent cells — invisible in text, a vertical seam down every column of a
+  // sprite made of blocks.
+  check('and given a size, so the blocks meet', Number(xtermArgs[xtermArgs.indexOf('-fs') + 1]) > 0)
 
   // gnome-terminal deprecated -e and mangles anything passed that way, so the
   // separator is not the same in all six and getting it wrong opens a window

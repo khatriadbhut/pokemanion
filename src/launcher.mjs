@@ -443,7 +443,42 @@ export const UNIX_TERMINALS = [
   // encoding outright and is the one that turned the grid back into a Pikachu.
   //
   // xterm alone needs this. The other five are UTF-8 whatever the locale says.
-  { command: 'xterm', args: (rows, cols, argv) => ['-en', 'UTF-8', '-geometry', `${cols}x${rows}`, '-e', ...argv] },
+  //
+  // `-fa monospace` for the same reason at one remove. `-en` fixed the bytes
+  // and the glyphs were still wrong: xterm defaults to the X core bitmap fonts,
+  // which no amount of installing DejaVu reaches, and those have no block
+  // elements at all. Not the fine ones — *any* of them, U+2588 FULL BLOCK
+  // included, so every cell of the sprite came out as a hollow box. That is the
+  // row of tofu the symbol default was moved to `block` to avoid, arriving by a
+  // different route and looking identical.
+  //
+  // `-fa` switches xterm to Xft, where fontconfig answers, and the same pane in
+  // the same container turns from a grid of boxes into a Pikachu. `monospace`
+  // rather than a real family name because it is fontconfig's generic and
+  // resolves to whatever the machine actually has; naming DejaVu would work on
+  // Debian and fail on a system that ships something else.
+  //
+  // The size is set rather than left alone because xterm's default Xft size
+  // leaves a gap between horizontally adjacent cells. On text that is invisible;
+  // on a sprite made entirely of blocks it is a vertical seam through every
+  // column, which reads as the sprite being broken.
+  //
+  // The other five already use fontconfig and need none of this.
+  {
+    command: 'xterm',
+    args: (rows, cols, argv) => [
+      '-en',
+      'UTF-8',
+      '-fa',
+      'monospace',
+      '-fs',
+      '10',
+      '-geometry',
+      `${cols}x${rows}`,
+      '-e',
+      ...argv,
+    ],
+  },
 ]
 
 // Whether a launcher's command returns once the pane is open, or runs for as

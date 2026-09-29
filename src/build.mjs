@@ -122,7 +122,7 @@ if (exotic.length) {
   console.warn(
     `\n  Warning: style "${config.style}" uses ${exotic.length} glyphs that many terminal\n` +
       `  fonts do not have (${exotic.slice(0, 6).join(' ')}...). If the status line fills with\n` +
-      `  boxes or question marks, run \`npm run fontcheck\`. Ghostty and Kitty draw\n` +
+      `  boxes or question marks, run \`node src/fontcheck.mjs\`. Ghostty and Kitty draw\n` +
       `  these themselves; Terminal.app needs "quad" or "braille".\n`,
   )
 }

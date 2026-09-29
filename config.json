@@ -40,5 +40,5 @@
   "guestBudgetMb": 200,
   "guestKeepDays": 14,
   "pokeball": true,
-  "cardMs": 8000
+  "cardMs": 4000
 }

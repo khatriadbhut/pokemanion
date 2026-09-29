@@ -1,6 +1,6 @@
 // Switch to one of the sprites in assets/ and rebuild.
 //
-// Usage: npm run use 3-standing.gif
+// Usage: node src/use.mjs 3-standing.gif
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -13,7 +13,7 @@ const available = readdirSync(join(ROOT, 'assets')).filter((f) => /\.(gif|png)$/
 if (!name || !existsSync(join(ROOT, 'assets', name))) {
   console.log('\n  Sprites in assets/:\n')
   for (const file of available) console.log(`    ${file}`)
-  console.log('\n  npm run use <name>       npm run bakeoff   to compare them\n')
+  console.log('\n  node src/use.mjs <name>       node src/bakeoff.mjs   to compare them\n')
   process.exit(name ? 1 : 0)
 }
 
