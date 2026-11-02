@@ -405,3 +405,8 @@ Issues and pull requests welcome, particularly a sprite that reads better than
 one in the roster, or a terminal it cannot open a pane in yet.
 [docs/developer.md](docs/developer.md) is
 where to start.
+
+## Author
+
+Built by [Adbhut Khatri](https://adbhutkhatri.me/), a student at IIT Roorkee.
+More software, hardware and creative work: [adbhutkhatri.me](https://adbhutkhatri.me/).
